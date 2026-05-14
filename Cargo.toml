@@ -12,26 +12,26 @@ phoenix-rise = "0.1.2"
 clap = { version = "4", features = ["derive"] }
 
 # Async
-tokio = { version = "1.44", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "sync", "time"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
+toml = "1.1"
 
 # HTTP
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.13", features = ["json"] }
 
 # Solana
-solana-sdk = "~2.3"
-solana-pubkey = { version = "~2.4", features = ["curve25519"] }
-solana-instruction = { version = "~2.3", default-features = false, features = ["std"] }
-solana-rpc-client = "~2.3"
+solana-sdk = "~4.0"
+solana-pubkey = { version = "~4.2", features = ["curve25519"] }
+solana-instruction = { version = "~3.4", default-features = false, features = ["std"] }
+solana-rpc-client = "~3.1"
 
 # Encryption
 aes-gcm = "0.10"
 argon2 = "0.5"
-rand = "0.8"
+rand = "0.9"
 zeroize = { version = "1", features = ["derive"] }
 
 # Encoding
@@ -40,7 +40,7 @@ base64 = "0.22"
 
 # Output
 comfy-table = "7"
-colored = "2"
+colored = "3"
 
 # Error handling
 anyhow = "1"
@@ -54,14 +54,14 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 # Password input
-rpassword = "5"
+rpassword = "7"
 
 # MCP
-rmcp = { version = "1.2", features = ["server", "transport-io"] }
+rmcp = { version = "1.7", features = ["server", "transport-io"] }
 schemars = "1.0"
 
 # Directories
-dirs = "5"
+dirs = "6"
 
 # Technical analysis
 kand = "0.2"
