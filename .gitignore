@@ -1,0 +1,33 @@
+# Build
+target
+
+# IDE
+.idea/
+.vscode/
+.claude/
+*.swp
+*.swo
+*~
+
+**/__pycache__
+.zed/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Vulcan user data
+.vulcan/
+
+# Note: `.mcp.json` at repo root IS checked in — it's the project-scope MCP
+# manifest (a generic `{ "command": "vulcan", "args": ["mcp"] }` block, no
+# user-specific paths). Per-user MCP state lives in `~/.claude.json` (under
+# `projects.<path>.mcpServers`) and is outside this tree. For personal
+# overrides that shouldn't be shared, use `.mcp.local.json`.
+.mcp.local.json

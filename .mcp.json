@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "vulcan": {
+      "command": "vulcan",
+      "args": ["mcp"]
+    }
+  }
+}

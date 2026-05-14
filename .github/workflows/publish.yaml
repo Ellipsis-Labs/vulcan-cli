@@ -1,0 +1,136 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  validate-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate tag matches Cargo version
+        id: version
+        run: |
+          VERSION="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; data = json.load(sys.stdin); print(next(package["version"] for package in data["packages"] if package["name"] == "vulcan"))')"
+          EXPECTED_TAG="v${VERSION}"
+
+          if [ "${GITHUB_REF_NAME}" != "${EXPECTED_TAG}" ]; then
+            echo "Release tag ${GITHUB_REF_NAME} does not match vulcan/Cargo.toml version ${VERSION}."
+            echo "Expected tag: ${EXPECTED_TAG}"
+            exit 1
+          fi
+
+          echo "Version: ${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: [validate-version]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-cache
+        with:
+          cache-name: publish-test
+      - uses: ./.github/actions/cargo-binstall
+        with:
+          binaries: cargo-nextest
+      - run: cargo nextest run --locked --profile ci
+
+  cross-build:
+    needs: [test]
+    uses: ./.github/workflows/cross-build.yaml
+    secrets:
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      NIX_SIGNING_KEY: ${{ secrets.NIX_SIGNING_KEY }}
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [validate-version, cross-build]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        env:
+          VERSION: ${{ needs.validate-version.outputs.version }}
+        run: |
+          cd artifacts
+
+          echo "Version: $VERSION"
+
+          cp ../scripts/install.sh install.sh
+          sed -i "s/__VULCAN_VERSION__/${VERSION}/g" install.sh
+
+          # Map artifact directory names to Rust target triples
+          declare -A target_map=(
+            ["x86_64-linux"]="x86_64-unknown-linux-musl"
+            ["aarch64-linux"]="aarch64-unknown-linux-musl"
+            ["x86_64-darwin"]="x86_64-apple-darwin"
+            ["aarch64-darwin"]="aarch64-apple-darwin"
+          )
+
+          # Create compressed archives for each platform
+          for arch_dir in vulcan-*; do
+            if [ -d "$arch_dir" ]; then
+              arch_name="${arch_dir#vulcan-}"
+              rust_target="${target_map[$arch_name]}"
+
+              if [ -z "$rust_target" ]; then
+                echo "Warning: Unknown architecture mapping for $arch_name"
+                rust_target="$arch_name"
+              fi
+
+              # Move into directory and get the binary
+              cd "$arch_dir"
+
+              # The binary is named vulcan
+              if [ -f "vulcan" ]; then
+                # Create a tar.gz archive with the binary
+                tar -czf "../vulcan-${VERSION}-${rust_target}.tar.gz" vulcan
+                echo "Created vulcan-${VERSION}-${rust_target}.tar.gz"
+              else
+                echo "Warning: Binary not found in $arch_dir"
+              fi
+
+              cd ..
+            fi
+          done
+
+          # Generate checksums for all archives
+          echo "Generating checksums..."
+          sha256sum -- *.tar.gz > vulcan-checksums-sha256.txt
+
+          # List all created files
+          echo "Release assets:"
+          ls -la -- *.tar.gz vulcan-checksums-sha256.txt install.sh
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        if: github.ref_type == 'tag'
+        with:
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            artifacts/*.tar.gz
+            artifacts/vulcan-checksums-sha256.txt
+            artifacts/install.sh

@@ -1,0 +1,18 @@
+name: "Setup R2 Credentials"
+description: "Configure R2 credentials for CI"
+inputs:
+  r2-access-key-id:
+    description: "R2 access key ID"
+    required: true
+  r2-secret-access-key:
+    description: "R2 secret access key"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Configure R2 credentials
+      shell: bash
+      run: |
+        echo "AWS_ACCESS_KEY_ID=${{ inputs.r2-access-key-id }}" >> $GITHUB_ENV
+        echo "AWS_SECRET_ACCESS_KEY=${{ inputs.r2-secret-access-key }}" >> $GITHUB_ENV
