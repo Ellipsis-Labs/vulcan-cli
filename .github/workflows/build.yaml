@@ -1,0 +1,78 @@
+name: Run checks and tests
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  NIX_SIGNING_PUBLIC_KEY: "ellipsis-labs:eug33YU0s2/K/BgiOtEta1cwNIzERtIybNATLOBsrEA="
+  NIX_CACHE_URI: "s3://atlas-nix-cache?compression=zstd&parallel-compression=true&endpoint=6a2b885167c20bd5dd1d3bcb4b09760f.r2.cloudflarestorage.com"
+
+jobs:
+  check:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-cache
+        with:
+          cache-name: check
+      - run: cargo check --locked --all-targets
+
+  test:
+    runs-on: ${{ matrix.os }}
+    needs: [check]
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-cache
+        with:
+          cache-name: test
+      - uses: ./.github/actions/cargo-binstall
+        with:
+          binaries: cargo-nextest
+      - run: cargo nextest run --locked --profile ci
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-cache
+        with:
+          cache-name: clippy
+      - run: cargo clippy --all-targets -- -D warnings
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: rustup toolchain install nightly-2025-07-08 --component rustfmt
+      - run: cargo +nightly-2025-07-08 fmt --check
+
+  cross-build:
+    needs: [test, clippy, fmt]
+    uses: ./.github/workflows/cross-build.yaml
+    secrets:
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      NIX_SIGNING_KEY: ${{ secrets.NIX_SIGNING_KEY }}
+
+  all-checks-passed:
+    needs: [check, test, clippy, fmt, cross-build]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "All checks passed"

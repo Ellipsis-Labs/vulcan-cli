@@ -1,0 +1,873 @@
+{
+  "schema_version": "1.0.0",
+  "cli_version": "0.1.0",
+  "description": "Machine-readable command catalog for vulcan. 57 tools across 13 groups.",
+  "groups": {
+    "market": "Market data: prices, orderbooks, candles, funding rates",
+    "trade": "Order management: place, cancel, TP/SL",
+    "position": "Position management: view, close, reduce, bracket orders",
+    "margin": "Collateral management: deposit, withdraw, transfer, leverage tiers",
+    "history": "Phoenix/Rise trader history: fills, orders, collateral, funding, PnL",
+    "status": "Health check and connectivity",
+    "wallet": "Wallet creation, address, listing, and balance",
+    "account": "Account info and registration",
+    "auth": "Phoenix API wallet-session authentication",
+    "portfolio": "Combined portfolio snapshot in a single fetch",
+    "paper": "Local paper trading simulation with live prices and no real funds",
+    "strategy": "Curated Vulcan-owned strategy runners with tick logs and reports",
+    "ta": "Technical analysis: indicators (SMA, EMA, RSI, MACD, BBands, ATR, VWAP, ADX, Stoch) and trigger evaluation over candle history"
+  },
+  "commands": [
+    {
+      "name": "vulcan_market_list",
+      "command": "vulcan market list",
+      "group": "market",
+      "description": "List all available perpetual markets on Phoenix DEX with fees and leverage info.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [],
+      "example": "vulcan market list -o json"
+    },
+    {
+      "name": "vulcan_market_ticker",
+      "command": "vulcan market ticker",
+      "group": "market",
+      "description": "Get real-time ticker data for a market: mark price, funding rate, 24h volume and change.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol, e.g. SOL" }
+      ],
+      "example": "vulcan market ticker SOL -o json"
+    },
+    {
+      "name": "vulcan_market_info",
+      "command": "vulcan market info",
+      "group": "market",
+      "description": "Get detailed market configuration: tick size, fees, funding params, leverage tiers.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol, e.g. SOL" }
+      ],
+      "example": "vulcan market info SOL -o json"
+    },
+    {
+      "name": "vulcan_market_orderbook",
+      "command": "vulcan market orderbook",
+      "group": "market",
+      "description": "Get L2 orderbook snapshot with bids, asks, mid price, and spread.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol, e.g. SOL" },
+        { "name": "depth", "type": "integer", "required": false, "default": 10, "description": "Number of price levels per side" }
+      ],
+      "example": "vulcan market orderbook SOL --depth 10 -o json"
+    },
+    {
+      "name": "vulcan_market_candles",
+      "command": "vulcan market candles",
+      "group": "market",
+      "description": "Get historical candlestick (OHLCV) data for a market. Pass --with-indicators to append derived columns (e.g. RSI, MACD) for market-intel reports without a second call.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol, e.g. SOL" },
+        { "name": "interval", "type": "string", "required": false, "default": "1h", "description": "Candle interval: 1m, 5m, 15m, 1h, 4h, 1d" },
+        { "name": "limit", "type": "integer", "required": false, "default": 50, "description": "Max candles to return" },
+        { "name": "with_indicators", "type": "string[]", "required": false, "description": "Comma-separated indicator names to overlay on the candle table (sma, ema, rsi, macd, bbands, atr, vwap, adx, stoch). CLI-only; MCP callers should use vulcan_ta_compute." }
+      ],
+      "example": "vulcan market candles SOL --interval 1h --limit 50 --with-indicators rsi,macd -o json"
+    },
+    {
+      "name": "vulcan_ta_compute",
+      "command": "vulcan ta compute",
+      "group": "ta",
+      "description": "Compute a single technical indicator over the latest candles for a market. Returns a series aligned 1:1 with the candle window plus a summary verdict (e.g. 'oversold', 'strong trend'). Use for ad-hoc analysis or as a building block for triggers.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol, e.g. SOL" },
+        { "name": "indicator", "type": "string", "required": true, "description": "Indicator name: sma | ema | rsi | macd | bbands | atr | vwap | adx | stoch" },
+        { "name": "timeframe", "type": "string", "required": false, "default": "1h", "description": "Candle interval" },
+        { "name": "period", "type": "integer", "required": false, "description": "Lookback period; falls back to the indicator's default (RSI/ATR/ADX=14, SMA/EMA/BBands=20)" },
+        { "name": "limit", "type": "integer", "required": false, "default": 200, "description": "Number of candles to fetch for the computation" },
+        { "name": "params", "type": "object", "required": false, "description": "Indicator-specific parameters as JSON object, e.g. {\"fast\":12,\"slow\":26,\"signal\":9} for MACD, {\"dev_up\":2,\"dev_down\":2} for BBands" }
+      ],
+      "example": "vulcan ta compute SOL --indicator rsi --timeframe 1h --period 14 -o json"
+    },
+    {
+      "name": "vulcan_ta_signal",
+      "command": "vulcan ta signal",
+      "group": "ta",
+      "description": "Evaluate a trigger spec against the latest indicator value. Returns { fired, value, threshold, op } so agents can gate decisions on conditions like 'RSI < 30' or 'MACD histogram crosses_above 0'.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol, e.g. SOL" },
+        { "name": "spec", "type": "object", "required": true, "description": "Trigger spec: { indicator, timeframe, period?, op (lt|lte|gt|gte|crosses_above|crosses_below), threshold, key? (e.g. 'hist' for MACD), params? }" }
+      ],
+      "example": "vulcan ta signal SOL --spec '{\"indicator\":\"rsi\",\"timeframe\":\"1h\",\"op\":\"lt\",\"threshold\":30}' -o json"
+    },
+    {
+      "name": "vulcan_ta_report",
+      "command": "vulcan ta report",
+      "group": "ta",
+      "description": "Bundled multi-indicator snapshot (RSI, MACD, BBands, ATR, ADX) for market-intel reports. One call summarizes momentum, volatility, and trend strength.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol, e.g. SOL" },
+        { "name": "timeframe", "type": "string", "required": false, "default": "1h", "description": "Candle interval" }
+      ],
+      "example": "vulcan ta report SOL --timeframe 1h -o json"
+    },
+    {
+      "name": "vulcan_trade",
+      "command": "vulcan trade <market-buy|market-sell|limit-buy|limit-sell>",
+      "group": "trade",
+      "description": "Place a market or limit order. side=buy|sell, order_type=market|limit. Market orders take exactly one of size (base lots), tokens (base asset), or notional_usdc (USDC). Limit orders require size and price. Optional tp/sl may be attached on market orders and cross-margin limit orders; do not rely on same-call tp/sl for isolated limit orders.",
+      "auth_required": true,
+      "dangerous": true,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol, e.g. SOL" },
+        { "name": "side", "type": "string", "required": true, "description": "buy or sell" },
+        { "name": "order_type", "type": "string", "required": true, "description": "market or limit" },
+        { "name": "size", "type": "number", "required": false, "description": "Size in base lots. Required for limit; one of size/tokens/notional_usdc for market." },
+        { "name": "tokens", "type": "number", "required": false, "description": "Size in base-asset tokens (market only)" },
+        { "name": "notional_usdc", "type": "number", "required": false, "description": "Size in USDC notional, quoted at mid (market only). Actual fill differs by spread + impact." },
+        { "name": "price", "type": "number", "required": false, "description": "Limit price in USD (required when order_type=limit)" },
+        { "name": "tp", "type": "number", "required": false, "description": "Optional take-profit price. Supported on market orders and cross-margin limit orders; use post-hoc TP/SL tools for isolated limit orders." },
+        { "name": "sl", "type": "number", "required": false, "description": "Optional stop-loss price. Supported on market orders and cross-margin limit orders; use post-hoc TP/SL tools for isolated limit orders." },
+        { "name": "isolated", "type": "boolean", "required": false, "description": "Use isolated margin" },
+        { "name": "collateral", "type": "number", "required": false, "description": "USDC collateral for isolated subaccount" },
+        { "name": "reduce_only", "type": "boolean", "required": false, "description": "Order can only reduce existing position" },
+        { "name": "acknowledged", "type": "boolean", "required": true, "description": "Must be true to confirm dangerous operation" }
+      ],
+      "example": "vulcan trade market-buy SOL --notional-usdc 100 --yes -o json"
+    },
+    {
+      "name": "vulcan_trade_multi_limit",
+      "command": "MCP only: vulcan_trade_multi_limit",
+      "group": "trade",
+      "description": "MCP-only tool to place multiple post-only limit orders (bids and asks) in a single transaction.",
+      "auth_required": true,
+      "dangerous": true,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol, e.g. SOL" },
+        { "name": "bids", "type": "array", "required": true, "description": "Bid orders: [{ price, size }], where size is in base lots" },
+        { "name": "asks", "type": "array", "required": true, "description": "Ask orders: [{ price, size }], where size is in base lots" },
+        { "name": "slide", "type": "boolean", "required": false, "default": false, "description": "Slide orders to top of book if they would cross" },
+        { "name": "acknowledged", "type": "boolean", "required": true, "description": "Must be true to confirm dangerous operation" }
+      ],
+      "example": "vulcan_trade_multi_limit → { \"symbol\": \"SOL\", \"bids\": [{ \"price\": 140, \"size\": 25 }], \"asks\": [{ \"price\": 160, \"size\": 25 }], \"acknowledged\": true }"
+    },
+    {
+      "name": "vulcan_trade_orders",
+      "command": "vulcan trade orders",
+      "group": "trade",
+      "description": "List open orders. Omit symbol to list across all markets.",
+      "auth_required": true,
+      "dangerous": false,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": false, "description": "Market symbol. Omit to list all markets." }
+      ],
+      "example": "vulcan trade orders -o json"
+    },
+    {
+      "name": "vulcan_trade_cancel",
+      "command": "vulcan trade <cancel|cancel-all|cancel-tpsl>",
+      "group": "trade",
+      "description": "Cancel orders. scope=ids cancels specific orders (requires order_ids); scope=all cancels every open order for the market (requires symbol); scope=all-markets cancels every open order across every market (symbol ignored); scope=tpsl cancels TP/SL bracket orders on the position (use tp/sl booleans). CLI: omit the symbol on `vulcan trade cancel-all` to cancel across all markets.",
+      "auth_required": true,
+      "dangerous": true,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": false, "description": "Market symbol, e.g. SOL. Required for scope=ids, scope=all, and scope=tpsl. Ignored for scope=all-markets." },
+        { "name": "scope", "type": "string", "required": true, "description": "ids | all | all-markets | tpsl" },
+        { "name": "order_ids", "type": "array<string>", "required": false, "description": "Order IDs to cancel (required when scope=ids)" },
+        { "name": "tp", "type": "boolean", "required": false, "description": "When scope=tpsl, cancel the take-profit" },
+        { "name": "sl", "type": "boolean", "required": false, "description": "When scope=tpsl, cancel the stop-loss" },
+        { "name": "acknowledged", "type": "boolean", "required": true, "description": "Must be true to confirm dangerous operation" }
+      ],
+      "example": "vulcan trade cancel-all --yes -o json    # all markets; or `cancel-all SOL` for one market"
+    },
+    {
+      "name": "vulcan_trade_set_tpsl",
+      "command": "vulcan trade set-tpsl",
+      "group": "trade",
+      "description": "Set take-profit and/or stop-loss on an existing position. Auto-detects position side. Supports multi-level laddered exits and partial sizing via tp_levels / sl_levels (MCP) or repeatable --tp-level / --sl-level (CLI). Sums of level sizes must not exceed the current position.",
+      "auth_required": true,
+      "dangerous": true,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol, e.g. SOL" },
+        { "name": "tp", "type": "number", "required": false, "description": "Single take-profit price covering full position. Mutually exclusive with tp_levels." },
+        { "name": "sl", "type": "number", "required": false, "description": "Single stop-loss price covering full position. Mutually exclusive with sl_levels." },
+        { "name": "tp_levels", "type": "array", "required": false, "description": "Take-profit levels: [{price, size?, size_lots?}]. size is in base-asset tokens; size_lots is base lots. Mutually exclusive with tp." },
+        { "name": "sl_levels", "type": "array", "required": false, "description": "Stop-loss levels, same shape as tp_levels. Mutually exclusive with sl." },
+        { "name": "acknowledged", "type": "boolean", "required": true, "description": "Must be true to confirm dangerous operation" }
+      ],
+      "example": "vulcan trade set-tpsl SOL --tp-level 160:0.5 --tp-level 170:0.5 --sl-level 140 --yes -o json"
+    },
+    {
+      "name": "vulcan_position_list",
+      "command": "vulcan position list",
+      "group": "position",
+      "description": "List all open positions across cross and isolated subaccounts. Each row carries symbol (with ` [iso]` suffix for isolated), side, size, entry, mark, unrealized_pnl, unrealized_pnl_pct (precomputed using the phoenix-v2-frontend formula), initial_margin, maintenance_margin, liquidation_price, and subaccount_collateral/subaccount_index for isolated positions.",
+      "auth_required": true,
+      "dangerous": false,
+      "parameters": [],
+      "example": "vulcan position list -o json"
+    },
+    {
+      "name": "vulcan_position_show",
+      "command": "vulcan position show",
+      "group": "position",
+      "description": "Show detailed info for a specific position: PnL, margin, liquidation price, TP/SL.",
+      "auth_required": true,
+      "dangerous": false,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol, e.g. SOL" }
+      ],
+      "example": "vulcan position show SOL -o json"
+    },
+    {
+      "name": "vulcan_position_close",
+      "command": "vulcan position close",
+      "group": "position",
+      "description": "Close an entire position via market order on the opposite side.",
+      "auth_required": true,
+      "dangerous": true,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol, e.g. SOL" },
+        { "name": "acknowledged", "type": "boolean", "required": true, "description": "Must be true to confirm dangerous operation" }
+      ],
+      "example": "vulcan position close SOL --yes -o json"
+    },
+    {
+      "name": "vulcan_position_close_all",
+      "command": "vulcan position close-all",
+      "group": "position",
+      "description": "Close every open position across all markets and subaccounts via market orders on the opposite side. Used for emergency flatten flows. Each position is closed in its own transaction.",
+      "auth_required": true,
+      "dangerous": true,
+      "parameters": [
+        { "name": "acknowledged", "type": "boolean", "required": true, "description": "Must be true to confirm dangerous operation" }
+      ],
+      "example": "vulcan position close-all --yes -o json"
+    },
+    {
+      "name": "vulcan_position_reduce",
+      "command": "vulcan position reduce",
+      "group": "position",
+      "description": "Reduce a position by a specified size via market order on the opposite side.",
+      "auth_required": true,
+      "dangerous": true,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol, e.g. SOL" },
+        { "name": "size", "type": "number", "required": true, "description": "Size to reduce by in base lots" },
+        { "name": "acknowledged", "type": "boolean", "required": true, "description": "Must be true to confirm dangerous operation" }
+      ],
+      "example": "vulcan position reduce SOL 25 --yes -o json"
+    },
+    {
+      "name": "vulcan_position_tp_sl",
+      "command": "vulcan position tp-sl",
+      "group": "position",
+      "description": "Attach take-profit and/or stop-loss bracket orders to an existing position.",
+      "auth_required": true,
+      "dangerous": true,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol, e.g. SOL" },
+        { "name": "tp", "type": "number", "required": false, "description": "Take-profit price" },
+        { "name": "sl", "type": "number", "required": false, "description": "Stop-loss price" },
+        { "name": "acknowledged", "type": "boolean", "required": true, "description": "Must be true to confirm dangerous operation" }
+      ],
+      "example": "vulcan position tp-sl SOL --tp 160 --sl 140 --yes -o json"
+    },
+    {
+      "name": "vulcan_margin_status",
+      "command": "vulcan margin status",
+      "group": "margin",
+      "description": "Show cross-margin (subaccount 0) status only: collateral, PnL, risk state, available to withdraw. For the full account view including isolated subaccounts and total_account_value, call vulcan_portfolio instead.",
+      "auth_required": true,
+      "dangerous": false,
+      "parameters": [],
+      "example": "vulcan margin status -o json"
+    },
+    {
+      "name": "vulcan_margin_deposit",
+      "command": "vulcan margin deposit",
+      "group": "margin",
+      "description": "Deposit USDC collateral into the trading account.",
+      "auth_required": true,
+      "dangerous": true,
+      "parameters": [
+        { "name": "amount", "type": "number", "required": true, "description": "USDC amount to deposit" },
+        { "name": "acknowledged", "type": "boolean", "required": true, "description": "Must be true to confirm dangerous operation" }
+      ],
+      "example": "vulcan margin deposit 100 --yes -o json"
+    },
+    {
+      "name": "vulcan_margin_withdraw",
+      "command": "vulcan margin withdraw",
+      "group": "margin",
+      "description": "Withdraw USDC collateral from the trading account.",
+      "auth_required": true,
+      "dangerous": true,
+      "parameters": [
+        { "name": "amount", "type": "number", "required": true, "description": "USDC amount to withdraw" },
+        { "name": "acknowledged", "type": "boolean", "required": true, "description": "Must be true to confirm dangerous operation" }
+      ],
+      "example": "vulcan margin withdraw 50 --yes -o json"
+    },
+    {
+      "name": "vulcan_margin_transfer",
+      "command": "vulcan margin transfer",
+      "group": "margin",
+      "description": "Transfer collateral between subaccounts (e.g., cross-margin to isolated).",
+      "auth_required": true,
+      "dangerous": true,
+      "parameters": [
+        { "name": "from_subaccount", "type": "integer", "required": true, "description": "Source subaccount index (0 = cross-margin)" },
+        { "name": "to_subaccount", "type": "integer", "required": true, "description": "Destination subaccount index" },
+        { "name": "amount", "type": "number", "required": true, "description": "USDC amount to transfer" },
+        { "name": "acknowledged", "type": "boolean", "required": true, "description": "Must be true to confirm dangerous operation" }
+      ],
+      "example": "vulcan margin transfer --from 0 --to 1 --amount 50 --yes -o json"
+    },
+    {
+      "name": "vulcan_margin_transfer_child_to_parent",
+      "command": "vulcan margin sweep",
+      "group": "margin",
+      "description": "Sweep all collateral from a child (isolated) subaccount back to cross-margin.",
+      "auth_required": true,
+      "dangerous": true,
+      "parameters": [
+        { "name": "child_subaccount", "type": "integer", "required": true, "description": "Child subaccount index to sweep" },
+        { "name": "acknowledged", "type": "boolean", "required": true, "description": "Must be true to confirm dangerous operation" }
+      ],
+      "example": "vulcan margin sweep --child 1 --yes -o json"
+    },
+    {
+      "name": "vulcan_margin_sync_parent_to_child",
+      "command": "vulcan margin sync",
+      "group": "margin",
+      "description": "Sync parent (cross-margin) state to a child (isolated) subaccount.",
+      "auth_required": true,
+      "dangerous": true,
+      "parameters": [
+        { "name": "child_subaccount", "type": "integer", "required": true, "description": "Child subaccount index to sync to" },
+        { "name": "acknowledged", "type": "boolean", "required": true, "description": "Must be true to confirm dangerous operation" }
+      ],
+      "example": "vulcan margin sync --child 1 --yes -o json"
+    },
+    {
+      "name": "vulcan_margin_leverage_tiers",
+      "command": "vulcan margin leverage-tiers",
+      "group": "margin",
+      "description": "Show leverage tier schedule for a market: max leverage and max size per tier.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol, e.g. SOL" }
+      ],
+      "example": "vulcan margin leverage-tiers SOL -o json"
+    },
+    {
+      "name": "vulcan_margin_add_collateral",
+      "command": "vulcan margin add-collateral",
+      "group": "margin",
+      "description": "Add USDC collateral to an isolated position by symbol.",
+      "auth_required": true,
+      "dangerous": true,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol of the isolated position, e.g. SOL" },
+        { "name": "amount", "type": "number", "required": true, "description": "USDC amount to add" },
+        { "name": "acknowledged", "type": "boolean", "required": true, "description": "Must be true to confirm dangerous operation" }
+      ],
+      "example": "vulcan margin add-collateral SOL --amount 25 --yes -o json"
+    },
+    {
+      "name": "vulcan_history",
+      "command": "vulcan history <trades|orders|collateral|funding|pnl>",
+      "group": "history",
+      "description": "Get Phoenix/Rise trader history. type=trades|orders|collateral|funding|pnl.",
+      "auth_required": true,
+      "dangerous": false,
+      "parameters": [
+        { "name": "type", "type": "string", "required": true, "description": "trades | orders | collateral | funding | pnl" },
+        { "name": "symbol", "type": "string", "required": false, "description": "Filter by market symbol (ignored for collateral and pnl)" },
+        { "name": "resolution", "type": "string", "required": false, "default": "1h", "description": "PnL only: 1m, 5m, 15m, 1h, 4h, 1d, 1w, 1M" },
+        { "name": "limit", "type": "integer", "required": false, "default": 20, "description": "Max results to return" },
+        { "name": "cursor", "type": "string", "required": false, "description": "Pagination cursor for supported history feeds" }
+      ],
+      "example": "vulcan history trades --symbol SOL --limit 100 -o json"
+    },
+    {
+      "name": "vulcan_status",
+      "command": "vulcan status",
+      "group": "status",
+      "description": "Health check: verify config, wallet, RPC, API, and trader registration status.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [],
+      "example": "vulcan status -o json"
+    },
+    {
+      "name": "vulcan_wallet_create",
+      "command": "vulcan wallet create",
+      "group": "wallet",
+      "description": "Create a new encrypted local wallet and return its public deposit address. MCP requires a password for local encryption.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "name", "type": "string", "required": true, "description": "Wallet name to create" },
+        { "name": "password", "type": "string", "required": true, "description": "Password used to encrypt the local wallet file" }
+      ],
+      "example": "vulcan wallet create --name main -o json"
+    },
+    {
+      "name": "vulcan_wallet_list",
+      "command": "vulcan wallet list",
+      "group": "wallet",
+      "description": "List all stored wallets with names, public keys, and default status.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [],
+      "example": "vulcan wallet list -o json"
+    },
+    {
+      "name": "vulcan_wallet_address",
+      "command": "vulcan wallet show",
+      "group": "wallet",
+      "description": "Return a wallet public deposit address without querying RPC balances.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "name", "type": "string", "required": false, "description": "Wallet name (omit for default wallet)" }
+      ],
+      "example": "vulcan wallet show main -o json"
+    },
+    {
+      "name": "vulcan_wallet_balance",
+      "command": "vulcan wallet balance",
+      "group": "wallet",
+      "description": "Check SOL and USDC balance for a wallet.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "name", "type": "string", "required": false, "description": "Wallet name (omit for default wallet)" }
+      ],
+      "example": "vulcan wallet balance -o json"
+    },
+    {
+      "name": "vulcan_account_info",
+      "command": "vulcan account info",
+      "group": "account",
+      "description": "Get trader account info: collateral, positions, risk state.",
+      "auth_required": true,
+      "dangerous": false,
+      "parameters": [],
+      "example": "vulcan account info -o json"
+    },
+    {
+      "name": "vulcan_account_register",
+      "command": "vulcan account register",
+      "group": "account",
+      "description": "Register a new trader account with an access code, referral code, or backwards-compatible invite code.",
+      "auth_required": true,
+      "dangerous": true,
+      "parameters": [
+        { "name": "access_code", "type": "string", "required": false, "description": "Access code for registration; exactly one code field is required" },
+        { "name": "referral_code", "type": "string", "required": false, "description": "Referral code for registration; exactly one code field is required" },
+        { "name": "invite_code", "type": "string", "required": false, "description": "Backwards-compatible alias for access_code; exactly one code field is required" },
+        { "name": "acknowledged", "type": "boolean", "required": true, "description": "Must be true to execute" }
+      ],
+      "example": "vulcan account register --access-code ABC123 --yes -o json"
+    },
+    {
+      "name": "vulcan_auth_status",
+      "command": "vulcan auth status",
+      "group": "auth",
+      "description": "Show redacted Phoenix API wallet-session auth status.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [],
+      "example": "vulcan auth status -o json"
+    },
+    {
+      "name": "vulcan_auth_login",
+      "command": "vulcan auth login",
+      "group": "auth",
+      "description": "Log in to the Phoenix API by signing a wallet nonce and storing a local redacted session.",
+      "auth_required": true,
+      "dangerous": true,
+      "parameters": [
+        { "name": "acknowledged", "type": "boolean", "required": true, "description": "Required for MCP; CLI uses --yes/live wallet confirmation conventions" }
+      ],
+      "example": "vulcan auth login --yes -o json"
+    },
+    {
+      "name": "vulcan_auth_logout",
+      "command": "vulcan auth logout",
+      "group": "auth",
+      "description": "Clear the stored Phoenix API auth session.",
+      "auth_required": false,
+      "dangerous": true,
+      "parameters": [
+        { "name": "acknowledged", "type": "boolean", "required": true, "description": "Required for MCP to clear the session" }
+      ],
+      "example": "vulcan auth logout --yes -o json"
+    },
+    {
+      "name": "vulcan_portfolio",
+      "command": "vulcan portfolio",
+      "group": "portfolio",
+      "description": "Full account snapshot in one call: cross margin, positions across cross and isolated subaccounts (each with unrealized_pnl_pct and initial_margin), resting orders + conditional TP/SL triggers, an isolated_subaccounts[] array (collateral/portfolio_value/initial_margin/maintenance_margin per iso subaccount), and a totals block with total_collateral / total_account_value / total_unrealized_pnl across all subaccounts. Prefer totals.total_account_value over margin.portfolio_value when reporting account value.",
+      "auth_required": true,
+      "dangerous": false,
+      "parameters": [
+        { "name": "include", "type": "array<string>", "required": false, "description": "Optional subset of sections: margin, positions, orders. Default: all three. The isolated_subaccounts and totals blocks are returned whenever margin is included." }
+      ],
+      "example": "vulcan portfolio -o json"
+    },
+    {
+      "name": "vulcan_paper_init",
+      "command": "vulcan paper init",
+      "group": "paper",
+      "description": "Initialize or reset the local futures paper account.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "balance", "type": "number", "required": false, "default": 10000, "description": "Starting paper collateral balance" },
+        { "name": "currency", "type": "string", "required": false, "default": "USDC", "description": "Currency label" },
+        { "name": "fee_bps", "type": "number", "required": false, "default": 5, "description": "Fee in basis points charged on fills" }
+      ],
+      "example": "vulcan paper init --balance 10000 -o json"
+    },
+    {
+      "name": "vulcan_paper_status",
+      "command": "vulcan paper status",
+      "group": "paper",
+      "description": "Show paper account equity, PnL, fees, aggregate position notional, exposure ratio, positions, orders, and fill counts.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [],
+      "example": "vulcan paper status -o json"
+    },
+    {
+      "name": "vulcan_paper_positions",
+      "command": "vulcan paper positions",
+      "group": "paper",
+      "description": "List open paper positions with entry, mark, and unrealized PnL.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [],
+      "example": "vulcan paper positions -o json"
+    },
+    {
+      "name": "vulcan_paper_orders",
+      "command": "vulcan paper orders",
+      "group": "paper",
+      "description": "List open paper limit orders.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [],
+      "example": "vulcan paper orders -o json"
+    },
+    {
+      "name": "vulcan_paper_fills",
+      "command": "vulcan paper fills",
+      "group": "paper",
+      "description": "List recent paper fills.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "limit", "type": "integer", "required": false, "default": 50, "description": "Maximum fills to return" }
+      ],
+      "example": "vulcan paper fills --limit 50 -o json"
+    },
+    {
+      "name": "vulcan_paper_trade",
+      "command": "vulcan paper <buy|sell>",
+      "group": "paper",
+      "description": "Place a paper market or limit order using live prices and local state.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol, e.g. SOL" },
+        { "name": "side", "type": "string", "required": true, "enum": ["buy", "sell"], "description": "Order side" },
+        { "name": "order_type", "type": "string", "required": true, "enum": ["market", "limit"], "description": "Order type" },
+        { "name": "size", "type": "number", "required": false, "description": "Size in base lots; exactly one of size/tokens/notional_usdc" },
+        { "name": "tokens", "type": "number", "required": false, "description": "Size in base asset tokens" },
+        { "name": "notional_usdc", "type": "number", "required": false, "description": "Size as USDC notional" },
+        { "name": "price", "type": "number", "required": false, "description": "Limit price" }
+      ],
+      "example": "vulcan paper buy SOL --tokens 1 --type market -o json"
+    },
+    {
+      "name": "vulcan_paper_cancel",
+      "command": "vulcan paper cancel",
+      "group": "paper",
+      "description": "Cancel a local paper order by ID.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "order_id", "type": "string", "required": true, "description": "Paper order ID" }
+      ],
+      "example": "vulcan paper cancel paper-order-1 -o json"
+    },
+    {
+      "name": "vulcan_paper_cancel_all",
+      "command": "vulcan paper cancel-all",
+      "group": "paper",
+      "description": "Cancel all local paper orders, optionally filtered by symbol.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": false, "description": "Optional market symbol filter" }
+      ],
+      "example": "vulcan paper cancel-all SOL -o json"
+    },
+    {
+      "name": "vulcan_paper_reconcile",
+      "command": "vulcan paper reconcile",
+      "group": "paper",
+      "description": "Evaluate resting paper limit orders against live prices and fill crossed orders.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": false, "description": "Optional market symbol filter" }
+      ],
+      "example": "vulcan paper reconcile SOL -o json"
+    },
+    {
+      "name": "vulcan_strategy_twap_start",
+      "command": "vulcan strategy twap start",
+      "group": "strategy",
+      "description": "Run a Vulcan-owned market-order TWAP strategy with structured tick logs, lot-aware base-lot conversion, launch-time margin feasibility checks, a persisted slice ledger, and wallet context. Present modes as Paper mode, Live mode with confirmation required, Live mode with automatic execution, and Plan mode with dry run. Before launch, ask whether the user wants cross-margin or isolated-margin execution, plus additional triggers and safety guardrails such as TP/SL intent, max leverage/exposure, max total notional, max per-step notional, and drift limits. Paper, dry_run, live confirm_each, and live auto_execute are supported. MCP agents must use detached=true for multi-tick runs, store last_tick_seen=0, backfill startup ticks with status since_tick=0, use vulcan_strategy_monitor for compact non-blocking checkpoints, and call vulcan_strategy_wait_next_tick(after_tick=last_tick_seen) only when actively waiting. Report execution ticks in compact tables with full transaction signatures.",
+      "auth_required": false,
+      "dangerous": true,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol, e.g. SOL" },
+        { "name": "side", "type": "string", "required": true, "description": "buy | sell" },
+        { "name": "notional_usdc", "type": "number", "required": false, "description": "Total TWAP notional in USDC" },
+        { "name": "tokens", "type": "number", "required": false, "description": "Total TWAP size in base tokens" },
+        { "name": "slices", "type": "integer", "required": true, "description": "Number of slices" },
+        { "name": "interval_seconds", "type": "integer", "required": false, "default": 60, "description": "Seconds between slices" },
+        { "name": "mode", "type": "string", "required": false, "default": "paper", "description": "paper (Paper mode) | confirm_each (Live mode with confirmation required) | auto_execute (Live mode with automatic execution) | dry_run (Plan mode with dry run)" },
+        { "name": "margin_mode", "type": "string", "required": false, "default": "cross", "description": "cross | isolated; ask the user before launching a strategy" },
+        { "name": "isolated_collateral", "type": "number", "required": false, "description": "Optional USDC collateral to transfer from cross-margin on the first isolated live order" },
+        { "name": "run_label", "type": "string", "required": false, "description": "Optional run label" },
+        { "name": "max_total_notional_usdc", "type": "number", "required": false, "description": "Hard guardrail for total planned strategy notional" },
+        { "name": "max_step_notional_usdc", "type": "number", "required": false, "description": "Hard guardrail for per-step planned notional" },
+        { "name": "max_price_drift_bps", "type": "number", "required": false, "description": "Hard guardrail for mark-price drift from run start" },
+        { "name": "max_exposure_ratio", "type": "number", "required": false, "description": "Hard guardrail for position notional divided by equity; map user max-leverage safety input to this value" },
+        { "name": "reconcile_attempts", "type": "integer", "required": false, "description": "Number of history reconciliation attempts per live step" },
+        { "name": "reconcile_delay_ms", "type": "integer", "required": false, "description": "Milliseconds between reconciliation attempts" },
+        { "name": "acknowledged", "type": "boolean", "required": false, "description": "Required for live confirm_each/auto_execute via MCP; paper and dry-run do not require it" },
+        { "name": "detached", "type": "boolean", "required": false, "default": false, "description": "Return immediately with run_id while Vulcan executes the TWAP in the MCP server background; agents should monitor without blocking chat" }
+      ],
+      "example": "vulcan strategy twap start --symbol SOL --side buy --notional-usdc 1000 --slices 5 --interval-seconds 30 --mode paper -o json"
+    },
+    {
+      "name": "vulcan_strategy_grid_start",
+      "command": "vulcan strategy grid start",
+      "group": "strategy",
+      "description": "Run a Vulcan-owned grid strategy with structured tick logs, persisted level ledger, optional per-level TP/SL intent, paper/dry_run/live modes, launch-time margin feasibility checks, replacement maintenance, optional run-until-stopped lifecycle, stale-run detection, and local runner locking. Before launch, ask whether the user wants cross-margin or isolated-margin execution. Cross-margin live grids use multi-limit transactions; isolated live grids submit individual isolated limit orders and can transfer optional collateral on the first order. Live maintenance treats missing resting levels as filled and submits flipped replacement orders. TP/SL activation remains pending until fills can be mapped authoritatively. MCP agents should use detached=true for long-lived runs, backfill startup ticks with status since_tick=0, use vulcan_strategy_monitor for non-blocking checkpoints, report fills/replacements in compact tables with full transaction signatures, and use vulcan_strategy_finalize for explicit cleanup.",
+      "auth_required": false,
+      "dangerous": true,
+      "parameters": [
+        { "name": "symbol", "type": "string", "required": true, "description": "Market symbol, e.g. SOL" },
+        { "name": "lower_price", "type": "number", "required": false, "description": "Lower grid boundary price. Required unless center_on_mark is true." },
+        { "name": "upper_price", "type": "number", "required": false, "description": "Upper grid boundary price. Required unless center_on_mark is true." },
+        { "name": "center_on_mark", "type": "boolean", "required": false, "default": false, "description": "Compute lower_price/upper_price from the current mark at launch. Requires width_pct. Prefer this over absolute bounds when the approval round-trip might let the mark drift outside a fixed range." },
+        { "name": "width_pct", "type": "number", "required": false, "description": "Half-width of the grid as a percentage of mark (e.g. 1.0 = ±1%). Required when center_on_mark is true." },
+        { "name": "levels_per_side", "type": "integer", "required": true, "description": "Number of bid levels below mark and ask levels above mark" },
+        { "name": "tokens_per_level", "type": "number", "required": false, "description": "Generated level size in base tokens" },
+        { "name": "size_lots_per_level", "type": "integer", "required": false, "description": "Generated level size in base lots" },
+        { "name": "bid_levels", "type": "array<string>", "required": false, "description": "Custom bid levels as PRICE:SIZE_LOTS[:TP][:SL]" },
+        { "name": "ask_levels", "type": "array<string>", "required": false, "description": "Custom ask levels as PRICE:SIZE_LOTS[:TP][:SL]" },
+        { "name": "take_profit_spacing", "type": "number", "required": false, "description": "Distance from entry to TP for generated levels" },
+        { "name": "stop_loss_spacing", "type": "number", "required": false, "description": "Distance from entry to SL for generated levels" },
+        { "name": "interval_seconds", "type": "integer", "required": false, "default": 60, "description": "Seconds between maintenance ticks" },
+        { "name": "ticks", "type": "integer", "required": false, "default": 60, "description": "Maximum ticks to run, including initial placement" },
+        { "name": "run_until_stopped", "type": "boolean", "required": false, "default": false, "description": "Keep running maintenance ticks until paused or stopped" },
+        { "name": "stale_after_seconds", "type": "integer", "required": false, "description": "Seconds without a tick before status reports this run as stale; defaults to max(2 * interval_seconds, 180)" },
+        { "name": "mode", "type": "string", "required": false, "default": "paper", "description": "paper | dry_run | confirm_each | auto_execute" },
+        { "name": "margin_mode", "type": "string", "required": false, "default": "cross", "description": "cross | isolated; ask the user before launching a strategy" },
+        { "name": "isolated_collateral", "type": "number", "required": false, "description": "Optional USDC collateral to transfer from cross-margin on the first isolated live order" },
+        { "name": "run_label", "type": "string", "required": false, "description": "Optional run label" },
+        { "name": "slide", "type": "boolean", "required": false, "default": false, "description": "Whether live multi-limit orders may slide if crossing" },
+        { "name": "max_total_notional_usdc", "type": "number", "required": false, "description": "Max total planned grid notional" },
+        { "name": "max_step_notional_usdc", "type": "number", "required": false, "description": "Max per-level notional" },
+        { "name": "max_price_drift_bps", "type": "number", "required": false, "description": "Optional center-relative mark-price drift guard; grid bounds are the default price guard when omitted" },
+        { "name": "max_exposure_ratio", "type": "number", "required": false, "description": "Position notional divided by equity threshold" },
+        { "name": "acknowledged", "type": "boolean", "required": false, "description": "Required for live confirm_each/auto_execute via MCP; paper and dry-run do not require it" },
+        { "name": "detached", "type": "boolean", "required": false, "default": false, "description": "Return immediately with run_id while Vulcan executes the grid in the MCP server background; agents should monitor without blocking chat" }
+      ],
+      "example": "vulcan strategy grid start --symbol SOL --lower-price 140 --upper-price 160 --levels-per-side 5 --tokens-per-level 0.5 --mode paper -o json"
+    },
+    {
+      "name": "vulcan_strategy_ta_start",
+      "command": "vulcan strategy ta start",
+      "group": "strategy",
+      "description": "Run a TA-driven strategy whose behaviour is fully described by a JSON config of rules. Each rule pairs a boolean Condition over indicators/price/constants (`compare`, `crosses`, `all`/`any`/`not`) with an Action (`open` / `close` / `reduce` / `noop`). Each tick the runner: (1) reads pause/stop control, (2) snapshots market + position, (3) computes every distinct indicator referenced across the rule set exactly once, (4) walks rules top-down — the first one whose condition fires (and is not cooldown-locked or position-filter-skipped) dispatches its action and ends the tick. Cooldown policies: `none`, `until_condition_resets` (default), `once_per_run`, `min_ticks`. Reuses TWAP/grid scaffolding (run id, ledger, control IPC, pause/stop, monitor/status/wait_next_tick/report). Live modes require acknowledged=true plus --allow-dangerous.",
+      "auth_required": false,
+      "dangerous": true,
+      "parameters": [
+        { "name": "config", "type": "object", "required": true, "description": "TA strategy config object: { symbol, interval_seconds, margin_mode?, isolated_collateral?, max_concurrent_position_tokens?, max_firings?, rules: [ { name, when, do, cooldown?, only_if_position? }, ... ] }. `when` is a Condition tree; `do` is an Action enum {kind: open|close|reduce|noop, ...}." },
+        { "name": "mode", "type": "string", "required": false, "default": "paper", "description": "paper | dry_run | confirm_each | auto_execute" },
+        { "name": "max_ticks", "type": "integer", "required": false, "default": 60, "description": "Maximum ticks to run; ignored when run_until_stopped is true" },
+        { "name": "run_until_stopped", "type": "boolean", "required": false, "default": false, "description": "Keep running until paused/stopped" },
+        { "name": "run_label", "type": "string", "required": false, "description": "Optional run label" },
+        { "name": "detached", "type": "boolean", "required": false, "default": false, "description": "Return immediately with run_id; agents should monitor without blocking chat" },
+        { "name": "max_total_notional_usdc", "type": "number", "required": false, "description": "Guardrail total live notional" },
+        { "name": "max_step_notional_usdc", "type": "number", "required": false, "description": "Guardrail per-firing notional" },
+        { "name": "max_price_drift_bps", "type": "number", "required": false, "description": "Guardrail price drift from launch" },
+        { "name": "max_exposure_ratio", "type": "number", "required": false, "description": "Guardrail position notional / equity" },
+        { "name": "reconcile_attempts", "type": "integer", "required": false, "description": "Live reconcile attempts per firing" },
+        { "name": "reconcile_delay_ms", "type": "integer", "required": false, "description": "Live reconcile delay between attempts" },
+        { "name": "acknowledged", "type": "boolean", "required": false, "description": "Required for live confirm_each/auto_execute via MCP" }
+      ],
+      "example": "vulcan strategy ta start --config-file strategy.json --mode paper --max-ticks 60 -o json"
+    },
+    {
+      "name": "vulcan_strategy_runs",
+      "command": "vulcan strategy runs",
+      "group": "strategy",
+      "description": "List persisted strategy run summaries.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "limit", "type": "integer", "required": false, "default": 20, "description": "Maximum runs to return" }
+      ],
+      "example": "vulcan strategy runs -o json"
+    },
+    {
+      "name": "vulcan_strategy_status",
+      "command": "vulcan strategy status <RUN_ID>",
+      "group": "strategy",
+      "description": "Show compact latest status and ticks for a persisted strategy run. By default omits the full ledger to keep agent context small.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "run_id", "type": "string", "required": true, "description": "Strategy run ID" },
+        { "name": "since_tick", "type": "integer", "required": false, "description": "Return ticks newer than this tick index in new_ticks" },
+        { "name": "include_ledger", "type": "boolean", "required": false, "default": false, "description": "Include the full persisted ledger; defaults to false to reduce context" }
+      ],
+      "example": "vulcan strategy status twap-... -o json"
+    },
+    {
+      "name": "vulcan_strategy_monitor",
+      "command": "vulcan strategy monitor <RUN_ID>",
+      "group": "strategy",
+      "description": "Return compact non-blocking monitor state for a strategy run: last observed tick, heartbeat age, expected next tick, runner lock, stale status, and event counts.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "run_id", "type": "string", "required": true, "description": "Strategy run ID" },
+        { "name": "include_ledger", "type": "boolean", "required": false, "default": false, "description": "Include the full persisted ledger; defaults to false to reduce context" }
+      ],
+      "example": "vulcan strategy monitor grid-... -o json"
+    },
+    {
+      "name": "vulcan_strategy_reconcile_grid",
+      "command": "vulcan strategy reconcile-grid <RUN_ID>",
+      "group": "strategy",
+      "description": "Read-only inspection of live grid orders against the persisted grid ledger. Reports expected resting levels and missing levels without mutating ledger state.",
+      "auth_required": true,
+      "dangerous": false,
+      "parameters": [
+        { "name": "run_id", "type": "string", "required": true, "description": "Strategy run ID" }
+      ],
+      "example": "vulcan strategy reconcile-grid grid-... -o json"
+    },
+    {
+      "name": "vulcan_strategy_wait_next_tick",
+      "command": "vulcan strategy wait-next-tick <RUN_ID>",
+      "group": "strategy",
+      "description": "Wait server-side until a strategy emits a tick newer than after_tick, reaches a terminal status, or times out. Use this between detached MCP strategy ticks instead of shell sleep or repeated full status polls.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "run_id", "type": "string", "required": true, "description": "Strategy run ID" },
+        { "name": "after_tick", "type": "integer", "required": false, "description": "Return once a tick newer than this index exists. Defaults to current latest tick at call time." },
+        { "name": "timeout_seconds", "type": "integer", "required": false, "default": 90, "description": "Maximum seconds to wait before returning current status with timed_out=true" },
+        { "name": "include_ledger", "type": "boolean", "required": false, "default": false, "description": "Include the full persisted ledger; defaults to false to reduce context" }
+      ],
+      "example": "vulcan strategy wait-next-tick twap-... --after-tick 1 -o json"
+    },
+    {
+      "name": "vulcan_strategy_report",
+      "command": "vulcan strategy report <RUN_ID>",
+      "group": "strategy",
+      "description": "Read the final or latest persisted report for a strategy run.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "run_id", "type": "string", "required": true, "description": "Strategy run ID" }
+      ],
+      "example": "vulcan strategy report twap-... -o json"
+    },
+    {
+      "name": "vulcan_strategy_pause",
+      "command": "vulcan strategy pause <RUN_ID>",
+      "group": "strategy",
+      "description": "Request a running strategy to pause at the next safe point. Paused runs can be resumed.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "run_id", "type": "string", "required": true, "description": "Strategy run ID" },
+        { "name": "reason", "type": "string", "required": false, "description": "Optional reason recorded in the ledger" }
+      ],
+      "example": "vulcan strategy pause twap-... --reason user_requested -o json"
+    },
+    {
+      "name": "vulcan_strategy_stop",
+      "command": "vulcan strategy stop <RUN_ID>",
+      "group": "strategy",
+      "description": "Request a running strategy to stop permanently at the next safe point.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "run_id", "type": "string", "required": true, "description": "Strategy run ID" },
+        { "name": "reason", "type": "string", "required": false, "description": "Optional reason recorded in the ledger" }
+      ],
+      "example": "vulcan strategy stop twap-... --reason user_requested -o json"
+    },
+    {
+      "name": "vulcan_strategy_finalize",
+      "command": "vulcan strategy finalize <RUN_ID>",
+      "group": "strategy",
+      "description": "Request strategy stop and optionally perform explicit cleanup: cancel open orders on the strategy symbol and/or close any open position. Cleanup flags require acknowledgement.",
+      "auth_required": false,
+      "dangerous": true,
+      "parameters": [
+        { "name": "run_id", "type": "string", "required": true, "description": "Strategy run ID" },
+        { "name": "reason", "type": "string", "required": false, "description": "Optional reason recorded in the ledger" },
+        { "name": "cancel_orders", "type": "boolean", "required": false, "default": false, "description": "Cancel open orders on the strategy symbol" },
+        { "name": "close_position", "type": "boolean", "required": false, "default": false, "description": "Close any open position on the strategy symbol" },
+        { "name": "wait", "type": "boolean", "required": false, "default": false, "description": "Wait for the runner to observe the stop request before cleanup" },
+        { "name": "timeout_seconds", "type": "integer", "required": false, "default": 90, "description": "Maximum seconds to wait for runner progress" },
+        { "name": "acknowledged", "type": "boolean", "required": false, "description": "Required when cleanup flags are true via MCP" }
+      ],
+      "example": "vulcan strategy finalize grid-... --cancel-orders --close-position --wait --yes -o json"
+    },
+    {
+      "name": "vulcan_strategy_resume",
+      "command": "vulcan strategy resume <RUN_ID>",
+      "group": "strategy",
+      "description": "Resume a paused or incomplete persisted strategy run.",
+      "auth_required": false,
+      "dangerous": true,
+      "parameters": [
+        { "name": "run_id", "type": "string", "required": true, "description": "Strategy run ID" },
+        { "name": "from_step", "type": "integer", "required": false, "description": "Optional step index to resume from" },
+        { "name": "acknowledged", "type": "boolean", "required": false, "description": "Required when resuming via MCP" }
+      ],
+      "example": "vulcan strategy resume twap-... --yes -o json"
+    }
+  ]
+}

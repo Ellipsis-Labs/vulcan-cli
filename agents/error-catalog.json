@@ -1,0 +1,316 @@
+{
+  "categories": {
+    "validation": { "exit_code": 1, "retryable": false, "description": "Invalid input — fix the argument and retry" },
+    "auth": { "exit_code": 2, "retryable": false, "description": "Wallet or permission issue" },
+    "config": { "exit_code": 3, "retryable": false, "description": "Missing or invalid configuration" },
+    "api": { "exit_code": 4, "retryable": false, "description": "Phoenix API server error" },
+    "network": { "exit_code": 5, "retryable": true, "description": "Transient network error — safe to retry" },
+    "rate_limit": { "exit_code": 6, "retryable": true, "description": "Rate limited — wait and retry" },
+    "tx_failed": { "exit_code": 7, "retryable": false, "description": "On-chain transaction failed" },
+    "io": { "exit_code": 8, "retryable": true, "description": "File I/O error — check permissions" },
+    "dangerous_gate": { "exit_code": 9, "retryable": false, "description": "Dangerous operation not acknowledged" },
+    "internal": { "exit_code": 10, "retryable": false, "description": "Internal error — report a bug" }
+  },
+  "codes": {
+    "CONFIRMATION_REQUIRED": {
+      "category": "validation",
+      "recovery": "Add --yes flag to confirm, or --dry-run to simulate without executing"
+    },
+    "NOT_IMPLEMENTED": {
+      "category": "validation",
+      "recovery": "This feature is not yet available. Check for updates."
+    },
+    "INVALID_PUBKEY": {
+      "category": "validation",
+      "recovery": "Provide a valid Solana public key (base58 encoded)"
+    },
+    "INVALID_BYTES": {
+      "category": "validation",
+      "recovery": "Provide a valid byte array (JSON format, 64 bytes)"
+    },
+    "IMPORT_FAILED": {
+      "category": "validation",
+      "recovery": "Check the key format. Supported: base58, byte array, Solana CLI JSON file"
+    },
+    "INVALID_KEY": {
+      "category": "validation",
+      "recovery": "The private key is malformed. Check the format and try again"
+    },
+    "INVALID_FILE": {
+      "category": "validation",
+      "recovery": "File could not be read or parsed. Check the path and format"
+    },
+    "INVALID_INTERVAL": {
+      "category": "validation",
+      "recovery": "Use a valid candle interval: 1m, 5m, 15m, 1h, 4h, 1d"
+    },
+    "INVALID_SLIPPAGE": {
+      "category": "validation",
+      "recovery": "Slippage must be a positive number in basis points"
+    },
+    "INVALID_SUBACCOUNT": {
+      "category": "validation",
+      "recovery": "Subaccount index 0 is reserved for cross-margin. Use 1+ for isolated"
+    },
+    "UNKNOWN_MARKET": {
+      "category": "validation",
+      "recovery": "Run 'vulcan market list' to see available markets"
+    },
+    "UNKNOWN_TOOL": {
+      "category": "validation",
+      "recovery": "Run MCP tools/list to see available tools"
+    },
+    "MISSING_ARG": {
+      "category": "validation",
+      "recovery": "Provide the required argument. Check tool schema for required fields"
+    },
+    "EMPTY_NAME": {
+      "category": "validation",
+      "recovery": "Wallet name cannot be empty"
+    },
+    "EMPTY_PASSWORD": {
+      "category": "validation",
+      "recovery": "Password cannot be empty"
+    },
+    "PASSWORD_MISMATCH": {
+      "category": "validation",
+      "recovery": "Passwords do not match. Try again"
+    },
+    "INVALID_CHOICE": {
+      "category": "validation",
+      "recovery": "Enter a valid menu option number"
+    },
+    "WALLET_EXISTS": {
+      "category": "validation",
+      "recovery": "A wallet with this name already exists. Choose a different name or remove the existing one"
+    },
+    "WALLET_NOT_FOUND": {
+      "category": "auth",
+      "recovery": "Run 'vulcan wallet list' to see available wallets, or create one with 'vulcan wallet create'"
+    },
+    "DECRYPT_FAILED": {
+      "category": "auth",
+      "recovery": "Wrong password. Check VULCAN_WALLET_PASSWORD env var or try again"
+    },
+    "KEYPAIR_ERROR": {
+      "category": "auth",
+      "recovery": "Wallet keypair is corrupted. Try re-importing the wallet"
+    },
+    "NO_DEFAULT_WALLET": {
+      "category": "config",
+      "recovery": "Run 'vulcan wallet set-default <NAME>' to set a default wallet"
+    },
+    "CONFIG_ERROR": {
+      "category": "config",
+      "recovery": "Check ~/.vulcan/config.toml or run 'vulcan setup'"
+    },
+    "CONFIG_LOAD_FAILED": {
+      "category": "config",
+      "recovery": "Config file is invalid. Run 'vulcan setup' to recreate it"
+    },
+    "CONFIG_SAVE_FAILED": {
+      "category": "io",
+      "recovery": "Cannot write to ~/.vulcan/. Check directory permissions"
+    },
+    "INIT_FAILED": {
+      "category": "config",
+      "recovery": "Run 'vulcan setup' to initialize configuration"
+    },
+    "MCP_INIT_FAILED": {
+      "category": "config",
+      "recovery": "MCP server failed to initialize. Check config and try again"
+    },
+    "REGISTER_API_FAILED": {
+      "category": "api",
+      "recovery": "Check your invite code and API URL. Run 'vulcan status' to verify connectivity"
+    },
+    "TRADERS_FETCH_FAILED": {
+      "category": "api",
+      "recovery": "Phoenix API unreachable. Run 'vulcan status' to check connectivity"
+    },
+    "NO_TRADER_ACCOUNT": {
+      "category": "api",
+      "recovery": "Register first with 'vulcan account register --invite-code <CODE>'"
+    },
+    "EXCHANGE_FETCH_FAILED": {
+      "category": "api",
+      "recovery": "Cannot reach Phoenix API. Check api_url in config and network connectivity"
+    },
+    "MARKETS_FETCH_FAILED": {
+      "category": "api",
+      "recovery": "Cannot fetch market list. Run 'vulcan status' to check API connectivity"
+    },
+    "MARKET_FETCH_FAILED": {
+      "category": "api",
+      "recovery": "Market not found or API error. Run 'vulcan market list' to see available markets"
+    },
+    "CANDLES_FETCH_FAILED": {
+      "category": "api",
+      "recovery": "Cannot fetch candle data. Check symbol and interval parameters"
+    },
+    "BUILD_ORDER_FAILED": {
+      "category": "api",
+      "recovery": "Failed to build order transaction. Check market info and lot sizes"
+    },
+    "BUILD_CANCEL_FAILED": {
+      "category": "api",
+      "recovery": "Failed to build cancel transaction. Verify order IDs exist"
+    },
+    "BUILD_REGISTER_FAILED": {
+      "category": "api",
+      "recovery": "Failed to build registration transaction. Account may already be registered"
+    },
+    "BUILD_DEPOSIT_FAILED": {
+      "category": "api",
+      "recovery": "Failed to build deposit transaction. Check USDC balance with 'vulcan wallet balance'"
+    },
+    "BUILD_WITHDRAW_FAILED": {
+      "category": "api",
+      "recovery": "Failed to build withdrawal. Check available collateral with 'vulcan margin status'"
+    },
+    "BUILD_CLOSE_FAILED": {
+      "category": "api",
+      "recovery": "Failed to build close transaction. Check position exists with 'vulcan position list'"
+    },
+    "BUILD_REDUCE_FAILED": {
+      "category": "api",
+      "recovery": "Failed to build reduce transaction. Check position size"
+    },
+    "BUILD_TPSL_FAILED": {
+      "category": "api",
+      "recovery": "Failed to build TP/SL. TP/SL can only be set when opening or extending a position"
+    },
+    "BUILD_BRACKET_FAILED": {
+      "category": "api",
+      "recovery": "Failed to build bracket orders. Check TP/SL prices relative to entry"
+    },
+    "BUILD_TRANSFER_FAILED": {
+      "category": "api",
+      "recovery": "Failed to build transfer. Check subaccount indices and collateral balance"
+    },
+    "BUILD_SWEEP_FAILED": {
+      "category": "api",
+      "recovery": "Failed to build sweep transaction. Check child subaccount exists"
+    },
+    "BUILD_SYNC_FAILED": {
+      "category": "api",
+      "recovery": "Failed to build sync transaction. Check child subaccount exists"
+    },
+    "WS_CONNECT_FAILED": {
+      "category": "network",
+      "recovery": "WebSocket connection failed. Check network and try again"
+    },
+    "WS_SUBSCRIBE_FAILED": {
+      "category": "network",
+      "recovery": "WebSocket subscription failed. Check symbol and try again"
+    },
+    "NO_MARKET_DATA": {
+      "category": "network",
+      "recovery": "No market data received. Market may be inactive — try again"
+    },
+    "NO_ORDERBOOK_DATA": {
+      "category": "network",
+      "recovery": "No orderbook data received. Try again"
+    },
+    "NO_MID_DATA": {
+      "category": "network",
+      "recovery": "No mid price data received. Try again"
+    },
+    "TIMEOUT": {
+      "category": "network",
+      "recovery": "Request timed out. Check network connectivity and try again"
+    },
+    "BLOCKHASH_FAILED": {
+      "category": "network",
+      "recovery": "Cannot get recent blockhash from RPC. Check rpc_url in config"
+    },
+    "RPC_BALANCE_FAILED": {
+      "category": "network",
+      "recovery": "Cannot fetch balance from RPC. Check rpc_url in config"
+    },
+    "TX_SEND_FAILED": {
+      "category": "tx_failed",
+      "recovery": "Transaction rejected on-chain. Check wallet SOL balance, account state, and error logs"
+    },
+    "PASSWORD_READ_FAILED": {
+      "category": "io",
+      "recovery": "Cannot read password. Set VULCAN_WALLET_PASSWORD env var for non-interactive use"
+    },
+    "WALLET_LIST_FAILED": {
+      "category": "io",
+      "recovery": "Cannot list wallets. Check ~/.vulcan/wallets/ directory permissions"
+    },
+    "WALLET_SAVE_FAILED": {
+      "category": "io",
+      "recovery": "Cannot save wallet file. Check ~/.vulcan/wallets/ directory permissions"
+    },
+    "FLUSH_FAILED": {
+      "category": "io",
+      "recovery": "I/O error writing to stdout"
+    },
+    "READ_FAILED": {
+      "category": "io",
+      "recovery": "I/O error reading from stdin"
+    },
+    "KEYGEN_FAILED": {
+      "category": "internal",
+      "recovery": "Key generation failed unexpectedly. Try again"
+    },
+    "ENCRYPT_FAILED": {
+      "category": "internal",
+      "recovery": "Encryption failed unexpectedly. Try again"
+    },
+    "SESSION_WALLET_ERROR": {
+      "category": "internal",
+      "recovery": "Session wallet state is invalid. Restart the MCP server"
+    },
+    "MCP_SERVE_FAILED": {
+      "category": "internal",
+      "recovery": "MCP server failed to start. Check stderr for details"
+    },
+    "MCP_WAIT_FAILED": {
+      "category": "internal",
+      "recovery": "MCP server exited unexpectedly. Check stderr for details"
+    },
+    "ISOLATED_ONLY_MARKET": {
+      "category": "validation",
+      "recovery": "This market only supports isolated margin. Re-run with --isolated --collateral <AMOUNT>"
+    },
+    "NO_POSITION": {
+      "category": "validation",
+      "recovery": "No open position for this market. Check 'vulcan position list'"
+    },
+    "NO_TP_SL": {
+      "category": "validation",
+      "recovery": "Specify at least one of --tp or --sl"
+    },
+    "NO_ISOLATED_POSITION": {
+      "category": "validation",
+      "recovery": "No isolated position for this market. Open one first"
+    },
+    "INVALID_ORDER_IDS": {
+      "category": "validation",
+      "recovery": "Check order IDs with 'vulcan trade orders'"
+    },
+    "FILE_NOT_FOUND": {
+      "category": "validation",
+      "recovery": "Check the file path exists"
+    },
+    "SAVE_FAILED": {
+      "category": "io",
+      "recovery": "Check ~/.vulcan/wallets/ directory permissions"
+    },
+    "LIST_FAILED": {
+      "category": "io",
+      "recovery": "Check ~/.vulcan/wallets/ directory exists and is readable"
+    },
+    "SET_DEFAULT_FAILED": {
+      "category": "io",
+      "recovery": "Check filesystem permissions on ~/.vulcan/"
+    },
+    "WALLET_DEFAULT_FAILED": {
+      "category": "io",
+      "recovery": "Check filesystem permissions on ~/.vulcan/"
+    }
+  }
+}

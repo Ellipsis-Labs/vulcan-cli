@@ -1,0 +1,139 @@
+name: Cross Build
+
+on:
+  workflow_call:
+    secrets:
+      R2_ACCESS_KEY_ID:
+        required: true
+      R2_SECRET_ACCESS_KEY:
+        required: true
+      NIX_SIGNING_KEY:
+        required: true
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  NIX_SIGNING_PUBLIC_KEY: "ellipsis-labs:eug33YU0s2/K/BgiOtEta1cwNIzERtIybNATLOBsrEA="
+  NIX_CACHE_URI: "s3://atlas-nix-cache?compression=zstd&parallel-compression=true&endpoint=6a2b885167c20bd5dd1d3bcb4b09760f.r2.cloudflarestorage.com"
+
+jobs:
+  cross-build:
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      matrix:
+        target:
+          - { arch: x86_64-linux, runner: ubuntu-latest }
+          - { arch: aarch64-linux, runner: ubuntu-latest }
+          - { arch: aarch64-darwin, runner: macos-latest }
+          - { arch: x86_64-darwin, runner: macos-latest }
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure R2 credentials
+        uses: ./.github/actions/setup-r2-credentials
+        with:
+          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+
+      - name: Install nix
+        uses: nixbuild/nix-quick-install-action@v34
+        with:
+          nix_conf: |
+            substituters = ${{ env.NIX_CACHE_URI }} https://cache.nixos.org/
+            extra-trusted-public-keys = ${{ env.NIX_SIGNING_PUBLIC_KEY }}
+
+      - uses: ./.github/actions/rust-cache
+        with:
+          cache-name: cross-build-${{ matrix.target.arch }}
+
+      - name: Determine rust target
+        id: rust-target
+        run: |
+          case "${{ matrix.target.arch }}" in
+            "x86_64-linux")
+              echo "rust_target=x86_64-unknown-linux-musl" >> $GITHUB_OUTPUT
+              ;;
+            "aarch64-linux")
+              echo "rust_target=aarch64-unknown-linux-musl" >> $GITHUB_OUTPUT
+              ;;
+            "x86_64-darwin")
+              echo "rust_target=x86_64-apple-darwin" >> $GITHUB_OUTPUT
+              ;;
+            "aarch64-darwin")
+              echo "rust_target=aarch64-apple-darwin" >> $GITHUB_OUTPUT
+              ;;
+          esac
+
+      - name: Build binary
+        run: |
+          # Track what nix actually builds (not downloads) using the post-build-hook
+          mkdir -p /tmp/nix-hooks
+          cat > /tmp/nix-hooks/track-builds.sh << 'EOF'
+          #!/bin/bash
+          # The OUT_PATHS environment variable contains the paths that were just built
+          echo "$OUT_PATHS" >> /tmp/locally-built-paths.txt
+          EOF
+          chmod +x /tmp/nix-hooks/track-builds.sh
+
+          # Configure nix to use our tracking hook
+          export NIX_CONFIG="${NIX_CONFIG}
+          post-build-hook = /tmp/nix-hooks/track-builds.sh
+          "
+
+          # Clear any previous tracking
+          rm -f /tmp/locally-built-paths.txt
+          touch /tmp/locally-built-paths.txt
+
+          # Run the build
+          nix develop .#crossBuildShell-${{ matrix.target.arch }} \
+            --print-build-logs \
+            -c cargo build --locked --release
+
+          # Report what was built
+          if [ -s /tmp/locally-built-paths.txt ]; then
+            echo "Locally built paths:"
+            sort -u /tmp/locally-built-paths.txt
+          else
+            echo "No local builds detected (all dependencies from cache)"
+          fi
+
+      - name: Upload artifacts from cross-build
+        uses: actions/upload-artifact@v6
+        with:
+          name: vulcan-${{ matrix.target.arch }}
+          path: target/${{ steps.rust-target.outputs.rust_target }}/release/vulcan
+          retention-days: 5
+          if-no-files-found: error
+
+      - name: Upload cache misses to Nix cache
+        if: always()
+        run: |
+          # Check if we have any locally built paths to upload
+          if [ -f /tmp/locally-built-paths.txt ] && [ -s /tmp/locally-built-paths.txt ]; then
+            # Remove duplicates and empty lines
+            BUILT_PATHS=$(sort -u /tmp/locally-built-paths.txt | grep -v '^$' || true)
+
+            if [ -n "$BUILT_PATHS" ]; then
+              MISS_COUNT=$(echo "$BUILT_PATHS" | wc -l)
+              echo "Uploading $MISS_COUNT locally built derivations to cache:"
+              echo "$BUILT_PATHS" | head -10
+              if [ "$MISS_COUNT" -gt 10 ]; then
+                echo "... and $((MISS_COUNT - 10)) more"
+              fi
+
+              # Create signing key file
+              echo "${{ secrets.NIX_SIGNING_KEY }}" > /tmp/nix-signing-key.txt
+
+              # Upload only the paths that were actually built locally
+              echo "$BUILT_PATHS" | xargs nix copy --to "${{ env.NIX_CACHE_URI }}&secret-key=/tmp/nix-signing-key.txt" || {
+                echo "Warning: Some paths failed to upload, continuing..."
+              }
+
+              rm -f /tmp/nix-signing-key.txt
+              echo "Cache upload complete"
+            else
+              echo "No built paths found to upload"
+            fi
+          else
+            echo "No cache misses detected - all dependencies were already in cache"
+          fi

@@ -1,0 +1,44 @@
+name: cargo-binstall
+description: Use cargo-binstall to install cargo binaries
+inputs:
+  binaries:
+    description: The binaries to install
+    required: false
+runs:
+  using: composite
+  steps:
+    - name: Hash binaries
+      id: hash-binaries
+      shell: bash
+      run: |
+        if command -v sha256sum >/dev/null 2>&1; then
+          hash=$(echo "${{ inputs.binaries }}" | sha256sum | awk '{print $1}')
+        else
+          hash=$(echo "${{ inputs.binaries }}" | shasum -a 256 | awk '{print $1}')
+        fi
+        echo "binaries-hash=$hash" >> $GITHUB_OUTPUT
+    - uses: actions/cache@v4
+      name: Cache Cargo binaries
+      id: cache-cargo-binaries
+      with:
+        key: cargo-binaries-${{ steps.hash-binaries.outputs.binaries-hash }}-${{ runner.os }}-${{ runner.arch }}
+        path: |
+          ~/.cargo/bin/
+    - name: Find missing binaries
+      id: find-missing-binaries
+      shell: bash
+      run: |
+        missing_binaries=()
+        for binary in ${{ inputs.binaries }}; do
+          if ! command -v $binary &> /dev/null; then
+            missing_binaries+=($binary)
+          fi
+        done
+        echo "missing_binaries=${missing_binaries[*]}" >> $GITHUB_OUTPUT
+    - name: Install cargo-binstall
+      uses: cargo-bins/cargo-binstall@main
+      if: steps.find-missing-binaries.outputs.missing_binaries != ''
+    - name: Install missing binaries
+      if: steps.find-missing-binaries.outputs.missing_binaries != ''
+      shell: bash
+      run: cargo binstall --no-confirm --locked ${{ steps.find-missing-binaries.outputs.missing_binaries }}

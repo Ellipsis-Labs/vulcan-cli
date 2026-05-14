@@ -1,0 +1,68 @@
+[package]
+name = "vulcan-lib"
+version = "0.5.2"
+edition = "2021"
+description = "Core library for the Vulcan CLI"
+
+[dependencies]
+# Rise SDK
+phoenix-rise = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+
+# Serialization
+serde      = { workspace = true }
+serde_json = { workspace = true }
+toml       = { workspace = true }
+
+# HTTP
+reqwest = { workspace = true }
+
+# Solana
+solana-sdk        = { workspace = true }
+solana-pubkey     = { workspace = true }
+solana-rpc-client = { workspace = true }
+
+# Encryption
+aes-gcm = { workspace = true }
+argon2  = { workspace = true }
+rand    = { workspace = true }
+zeroize = { workspace = true }
+
+# Encoding
+bs58   = { workspace = true }
+base64 = { workspace = true }
+
+# Output
+comfy-table = { workspace = true }
+colored     = { workspace = true }
+
+# Error handling
+anyhow   = { workspace = true }
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Time
+chrono = { workspace = true }
+
+# Password input
+rpassword = { workspace = true }
+
+# Directories
+dirs = { workspace = true }
+
+# Technical analysis
+kand = { workspace = true }
+
+# MCP
+rmcp = { workspace = true }
+schemars = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
