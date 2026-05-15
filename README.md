@@ -39,7 +39,7 @@ The installer verifies the release archive against `vulcan-checksums-sha256.txt`
 Install a specific version:
 
 ```bash
-curl -fsSL https://github.com/Ellipsis-Labs/vulcan-cli/releases/download/v0.5.2/install.sh | sh
+curl -fsSL https://github.com/Ellipsis-Labs/vulcan-cli/releases/download/v0.5.3/install.sh | sh
 ```
 
 Build from source:
