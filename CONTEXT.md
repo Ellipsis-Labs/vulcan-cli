@@ -25,7 +25,7 @@ This is the canonical runtime contract for agents using `vulcan`. Keep it compac
 
 MCP tools are named `vulcan_<group>_<action>`. Dangerous tools require both a dangerous-capable server and `acknowledged: true` on each dangerous call.
 
-Default MCP configuration is read-only/paper-safe. Live agent trading should use a user-approved dangerous MCP install from `vulcan agent live-ready --target <claude|cursor|codex|agentskills> --scope user -o json` or `vulcan agent mcp install --dangerous`.
+Default MCP configuration is read-only/paper-safe. To enable live agent trading, run `vulcan agent mcp install --target <claude|cursor|codex|agentskills> --scope user --dangerous` and restart the agent client. Use `vulcan agent live-ready --target <…> --scope user -o json` to *check* whether live signing is wired; it is read-only and does not install anything.
 
 ### CLI (Fallback)
 
@@ -58,7 +58,7 @@ MCP unlocks the wallet once at server startup. No per-call password prompts are 
 
 `VULCAN_WALLET_PASSWORD` is required for non-interactive live signing. `VULCAN_WALLET_NAME` selects a stored wallet; if omitted, Vulcan uses the configured default wallet.
 
-For CLI live signing, run interactively so Vulcan can prompt, or set `VULCAN_WALLET_NAME` and `VULCAN_WALLET_PASSWORD`. If a non-interactive live CLI call fails with `WALLET_PASSWORD_REQUIRED`, do not hand the same command back as a manual shell workaround. Show `live-ready` instructions or ask the user to explicitly set `VULCAN_WALLET_PASSWORD`.
+For CLI live signing, run interactively so Vulcan can prompt, or set `VULCAN_WALLET_NAME` and `VULCAN_WALLET_PASSWORD`. If a non-interactive live CLI call fails with `WALLET_PASSWORD_REQUIRED`, do not hand the same command back as a manual shell workaround. Run `vulcan agent mcp doctor --target <…> --scope user` to see whether MCP is already configured: if so, the fix is to restart the agent client; if not, surface the `manual_install_command` (which runs `vulcan agent mcp install --dangerous`) for the user to execute and restart. `vulcan agent live-ready` is a readiness check, not an installer. CLI fallback is asking the user to set `VULCAN_WALLET_PASSWORD` in their own shell before invoking the command.
 
 To switch an installed MCP config to another stored wallet, run `vulcan agent mcp set-wallet <WALLET_NAME> --target <agent> --scope user`. It validates decryption, updates MCP env, and requires an agent-client restart. Before live trading after a wallet switch, call `vulcan_status` and verify `wallet.source == "mcp_session"` plus the intended wallet name or public key. If it does not match, the MCP server is stale; stop and ask the user to restart the agent client.
 

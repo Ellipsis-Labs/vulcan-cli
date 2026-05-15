@@ -81,7 +81,13 @@ Default MCP configuration is read-only/paper-safe. Dangerous operations require 
 }
 ```
 
-Use `vulcan agent live-ready --target <claude|cursor|codex|agentskills> --scope user -o json`, `vulcan agent mcp doctor`, and `vulcan agent mcp install` to inspect or install target-specific client config. Dangerous MCP setup stores wallet unlock material in local agent config, so only use it after explicit user opt-in.
+Three commands cover target-specific client config; they are not interchangeable:
+
+- `vulcan agent mcp install --target <claude|cursor|codex|agentskills> --scope user --dangerous` — installs/updates the MCP entry. This is the one that actually wires live signing.
+- `vulcan agent mcp doctor --target <…> --scope user` — inspects the installed entry (path, JSON storage pointer, dangerous flag, password env presence) and returns a `manual_install_command` when something is missing. Read-only.
+- `vulcan agent live-ready --target <…> --scope user -o json` — readiness summary used by preflight and onboarding. Read-only.
+
+Dangerous MCP setup stores wallet unlock material in local agent config, so only use `mcp install --dangerous` after explicit user opt-in.
 
 To switch an installed MCP config to another stored wallet, run:
 

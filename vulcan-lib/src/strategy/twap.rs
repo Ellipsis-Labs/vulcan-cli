@@ -181,13 +181,13 @@ async fn build_twap_config(
             if err.code == "WALLET_PASSWORD_REQUIRED" {
                 VulcanError::auth(
                     "WALLET_PASSWORD_REQUIRED",
-                    "Live strategy was not started and no ledger was created. Wallet password is required for live signing, and non-interactive agent shells cannot answer wallet prompts. Agents should not ask the user to run this TWAP manually as a `!` shell workaround. Run `vulcan agent live-ready --target <claude|cursor|codex|agentskills> --scope user -o json` for exact agent-aware MCP setup instructions; or set VULCAN_WALLET_PASSWORD before launching the CLI command.",
+                    "Live strategy was not started and no ledger was created. Wallet password is required for live signing, and non-interactive agent shells cannot answer wallet prompts. Agents should not ask the user to run this TWAP manually as a `!` shell workaround. If MCP is already configured (check with `vulcan agent mcp doctor --target <claude|cursor|codex|agentskills> --scope user`): restart the agent client so Vulcan inherits the env. If MCP is NOT yet configured: run `vulcan agent mcp install --target <…> --scope user --dangerous` and restart. `vulcan agent live-ready` is a status check, not an installer. CLI fallback: set VULCAN_WALLET_PASSWORD before launching the CLI command.",
                 )
             } else if err.code == "DECRYPT_FAILED" {
                 VulcanError::auth(
                     err.code.clone(),
                     format!(
-                        "{} Live strategy was not started and no ledger was created. Agents should not ask the user to run this TWAP manually as a `!` shell workaround. Run `vulcan agent live-ready --target <claude|cursor|codex|agentskills> --scope user -o json` for exact agent-aware MCP setup instructions; or set VULCAN_WALLET_PASSWORD before launching the CLI command.",
+                        "{} Live strategy was not started and no ledger was created. Agents should not ask the user to run this TWAP manually as a `!` shell workaround. If MCP is already configured (check with `vulcan agent mcp doctor --target <claude|cursor|codex|agentskills> --scope user`): restart the agent client. If MCP is NOT yet configured: run `vulcan agent mcp install --target <…> --scope user --dangerous` and restart. `vulcan agent live-ready` is a status check, not an installer. CLI fallback: set VULCAN_WALLET_PASSWORD before launching the CLI command.",
                         err.message
                     ),
                 )

@@ -92,6 +92,10 @@
       "category": "auth",
       "recovery": "Wrong password. Check VULCAN_WALLET_PASSWORD env var or try again"
     },
+    "WALLET_PASSWORD_REQUIRED": {
+      "category": "auth",
+      "recovery": "Live signing needs a wallet password. If MCP is already configured with the password (vulcan agent mcp doctor → Password env: true): restart the agent client so Vulcan runs through MCP and inherits the env. If MCP is NOT yet configured (Configured: false OR Dangerous: false OR Password env: false): run 'vulcan agent mcp install --target <claude|cursor|codex|agentskills> --scope user --dangerous' and restart. Alternate: run the CLI yourself from a shell with VULCAN_WALLET_PASSWORD exported. 'vulcan agent mcp set-wallet' only switches the wallet name on an already-installed dangerous entry; it is NOT the fix for missing password env. NEVER read MCP config files to scrape the password."
+    },
     "KEYPAIR_ERROR": {
       "category": "auth",
       "recovery": "Wallet keypair is corrupted. Try re-importing the wallet"

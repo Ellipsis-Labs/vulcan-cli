@@ -38,7 +38,7 @@ Paper uses real Phoenix market prices and a simulated balance. **No wallet, no A
 
 ```bash
 vulcan paper init --balance 10000 -o json
-vulcan paper buy SOL 0.1 -o json
+vulcan paper buy SOL --tokens 0.1 -o json
 vulcan paper status -o json
 vulcan paper positions -o json
 ```
@@ -70,9 +70,9 @@ Restart the host fully. The agent now sees `vulcan_*` tools — read-only and pa
 For real funds, hand off to `vulcan-onboarding` — it covers wallet creation, account registration, deposit, and verification. The short version:
 
 ```bash
-vulcan wallet create my-wallet         # creates an encrypted wallet, prompts for password
-vulcan account register                # registers the trader on Phoenix
-vulcan margin deposit --amount 50      # deposit USDC collateral
+vulcan wallet create my-wallet                       # creates an encrypted wallet, prompts for password
+vulcan account register --access-code <CODE>         # or --referral-code <CODE>; registers the trader on Phoenix
+vulcan margin deposit 50                             # deposit 50 USDC of collateral
 ```
 
 Then wire the wallet into the MCP server:
@@ -97,14 +97,18 @@ Confirms the active wallet, password source, collateral, and lists any blockers 
 
 ## Scoping recommendation: use a dedicated sub-wallet
 
-An AI agent should not have access to your main wallet's balance. Phoenix supports isolated subaccounts: create a sub-wallet (or sub-account) with a small collateral allocation specifically for agent-driven trading. If the agent goes wrong, the blast radius is bounded to the sub-wallet's balance.
+An AI agent should not have access to your main wallet's balance. Create a separate encrypted wallet with a small collateral allocation specifically for agent-driven trading. If the agent goes wrong, the blast radius is bounded to that wallet's balance.
 
 ```bash
-vulcan account create-subaccount --label agent-sandbox
-vulcan margin transfer --to-subaccount agent-sandbox --amount 50
+vulcan wallet create agent-sandbox              # separate keypair, separate password
+# fund agent-sandbox externally with a little SOL + USDC, then:
+vulcan account register --access-code <CODE> -w agent-sandbox
+vulcan margin deposit 50 -w agent-sandbox       # deposit 50 USDC to the sandbox trader
 ```
 
 Then point the MCP server at that wallet (`vulcan agent mcp set-wallet agent-sandbox --target <host> --scope user`), not your main one.
+
+For finer-grained risk isolation inside a single wallet, Phoenix also supports numbered subaccounts via `vulcan account create-subaccount --subaccount-index <N>` and `vulcan margin transfer --from 0 --to <N> <AMOUNT>`. That is an advanced workflow beyond quickstart scope.
 
 ## Next skills
 

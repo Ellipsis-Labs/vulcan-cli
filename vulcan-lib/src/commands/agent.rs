@@ -233,6 +233,11 @@ pub struct AgentMcpDoctorResult {
     pub target: String,
     pub scope: String,
     pub path: String,
+    /// Dotted JSON path inside `path` where the vulcan entry lives.
+    /// Claude/user nests under `projects."<cwd>".mcpServers.vulcan`;
+    /// other targets use top-level `mcpServers.vulcan`. Disambiguates the
+    /// `scope` label, which refers to install scope rather than JSON nesting.
+    pub storage_pointer: String,
     pub exists: bool,
     pub configured: bool,
     pub dangerous_enabled: bool,
@@ -397,6 +402,7 @@ impl TableRenderable for AgentMcpDoctorResult {
         println!("  Target:      {}", self.target);
         println!("  Scope:       {}", self.scope);
         println!("  Path:        {}", self.path);
+        println!("  Storage:     {}", self.storage_pointer);
         println!("  Exists:      {}", self.exists);
         println!("  Configured:  {}", self.configured);
         println!("  Dangerous:   {}", self.dangerous_enabled);
@@ -1680,6 +1686,7 @@ pub fn mcp_doctor(
         target: target_label(target).to_string(),
         scope: scope_label(scope).to_string(),
         path: path.to_string_lossy().to_string(),
+        storage_pointer: format_pointer(&pointer),
         exists: path.exists(),
         configured,
         dangerous_enabled,
@@ -2490,6 +2497,27 @@ fn mcp_config_path(target: AgentTarget, scope: AgentScope) -> Result<PathBuf, Vu
         (AgentTarget::Agentskills, AgentScope::Project) => PathBuf::from(".agents/mcp.json"),
         (AgentTarget::Agentskills, AgentScope::User) => home.join(".agents/mcp.json"),
     })
+}
+
+/// Render a JSON-pointer segment list as a dotted path, quoting segments that
+/// contain characters outside `[A-Za-z0-9_-]`. Example: `["projects", "/Users/x",
+/// "mcpServers", "vulcan"]` → `projects."/Users/x".mcpServers.vulcan`.
+fn format_pointer(pointer: &[String]) -> String {
+    pointer
+        .iter()
+        .map(|seg| {
+            let needs_quote = seg.is_empty()
+                || !seg
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+            if needs_quote {
+                format!("\"{seg}\"")
+            } else {
+                seg.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".")
 }
 
 /// Where the `vulcan` MCP server entry lives inside the JSON file at `mcp_config_path`.

@@ -252,7 +252,7 @@ pub fn prompt_password() -> Result<String, VulcanError> {
     if !std::io::stdin().is_terminal() {
         return Err(VulcanError::auth(
             "WALLET_PASSWORD_REQUIRED",
-            "Wallet password is required for live signing. Non-interactive agent shells cannot answer wallet prompts. Run `vulcan agent live-ready --target <claude|cursor|codex|agentskills> --scope user -o json` for exact agent-aware MCP setup instructions. CLI fallback requires VULCAN_WALLET_PASSWORD to be set before starting the command.",
+            "Wallet password is required for live signing. Non-interactive agent shells cannot answer wallet prompts. If MCP is already configured (check with `vulcan agent mcp doctor --target <claude|cursor|codex|agentskills> --scope user`): restart the agent client so Vulcan inherits the env. If MCP is NOT yet configured: run `vulcan agent mcp install --target <…> --scope user --dangerous` and restart the client. `vulcan agent live-ready --target <…> --scope user -o json` reports readiness but does not install anything. CLI fallback requires VULCAN_WALLET_PASSWORD to be set before starting the command.",
         ));
     }
     eprint!("Wallet password: ");

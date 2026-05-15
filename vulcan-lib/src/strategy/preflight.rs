@@ -236,10 +236,12 @@ pub async fn check_live_readiness(ctx: &AppContext) -> LiveReadiness {
                 target
             )
         } else {
-            "No MCP target has live signing configured. Either (a) run `vulcan agent live-ready \
-             --target <claude|cursor|codex|agentskills> --scope user -o json` to wire MCP, or \
-             (b) export VULCAN_WALLET_PASSWORD before launching the CLI from your own shell. \
-             DO NOT read password values from any config file."
+            "No MCP target has live signing configured. Either (a) install a dangerous MCP \
+             server: `vulcan agent mcp install --target <claude|cursor|codex|agentskills> \
+             --scope user --dangerous` (then restart the agent client), or (b) export \
+             VULCAN_WALLET_PASSWORD before launching the CLI from your own shell. \
+             Use `vulcan agent live-ready --target <…> --scope user -o json` to check status; \
+             it does not install anything. DO NOT read password values from any config file."
                 .to_string()
         };
         blockers.push(Blocker {

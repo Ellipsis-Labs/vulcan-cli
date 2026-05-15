@@ -6,12 +6,25 @@ Agent and human-friendly CLI for trading perpetual futures on [Phoenix](https://
 
 ## What Vulcan Provides
 
-- A human-friendly CLI with JSON output for automation.
+- Account, margin, position, and order management for Phoenix perps.
 - Local paper trading with live market prices and no wallet required.
-- Wallet, account, margin, position, and order management for Phoenix perps.
-- First-class strategy runners for TWAP and grid trading.
 - A local MCP server so agents can use Vulcan tools directly.
+- First-class strategy runners for TWAP, grid trading, and TA.
 - Bundled Agent Skills for Cursor, Claude Code, Codex, and Agentskills/OpenClaw-style clients.
+
+### Example Agent Prompts
+
+> "Install Vulcan from github.com/Ellipsis-Labs/vulcan-cli, and register the MCP server with Claude Code"
+>
+> "Give me a full portfolio snapshot: cross + isolated margin health, open positions with unrealized PnL %, resting orders, and any funding exposure I should know about."
+>
+> "Scan the top 5 markets by 24h volume — give me funding rate, mark price, and a one-line take on each."
+>
+> "Open a $200 long on SOL then attach a TP at +5% and SL at -3%."
+>
+> "I need to long $5,000 of SOL. Run a TWAP over 20 minutes in 10 slices.
+>
+> "Build a TA strategy that goes long when RSI(14) crosses above 30 on the 5m and exits when it crosses 70. Paper mode first, $500 per entry"
 
 ## Install
 
@@ -26,7 +39,7 @@ The installer verifies the release archive against `vulcan-checksums-sha256.txt`
 Install a specific version:
 
 ```bash
-curl -fsSL https://github.com/Ellipsis-Labs/vulcan-cli/releases/download/v0.1.0/install.sh | sh
+curl -fsSL https://github.com/Ellipsis-Labs/vulcan-cli/releases/download/v0.5.2/install.sh | sh
 ```
 
 Build from source:
@@ -83,19 +96,11 @@ vulcan agent mcp diagnose --target claude --scope user
 
 ### Step 2 (optional): Enable live trading
 
-Live trading requires both (a) a stored wallet to unlock for signing and (b) the `--allow-dangerous` flag on the MCP server args (without it, dangerous tools are filtered out of `tools/list`). The recommended flow:
+Live trading requires a stored wallet to unlock for signing and live signing permission. You can setup at install time with `--dangerous`
 
 ```bash
 # Wire up the wallet for live signing.
-# Prompts for the wallet password interactively, validates decryption,
-# writes VULCAN_WALLET_NAME + VULCAN_WALLET_PASSWORD into the MCP env block,
-# AND ensures --allow-dangerous is in the MCP server args (idempotent).
-vulcan agent mcp set-wallet <wallet-name> --target claude --scope user
-```
-
-Equivalently, you can do everything at install time:
-
-```bash
+# Prompts for the wallet password interactively, validates decryption
 vulcan agent mcp install --target claude --scope user --dangerous
 ```
 
@@ -106,7 +111,7 @@ After restart, dangerous tools (live trades, deposits, withdrawals, cancellation
 ### Switching wallets later
 
 ```bash
-vulcan agent mcp set-wallet <other-wallet> --target claude --scope user
+vulcan agent mcp set-wallet <wallet-name> --target claude --scope user
 ```
 
 ### Inspecting and repairing
@@ -193,6 +198,7 @@ Supported runners:
 
 - TWAP: split a larger order into timed slices.
 - Grid: maintain layered limit orders across a price range.
+- TA: rule-based runner over technical indicators for entry/exit.
 
 Modes:
 
@@ -205,7 +211,6 @@ Examples:
 
 ```bash
 vulcan strategy twap start --symbol SOL --side buy --notional-usdc 1000 --slices 5 --interval-seconds 30 --mode paper -o json
-vulcan strategy grid start --symbol SOL --lower-price 140 --upper-price 160 --levels-per-side 5 --tokens-per-level 0.5 --mode paper -o json
 vulcan strategy runs -o json
 vulcan strategy monitor <RUN_ID> -o json
 vulcan strategy finalize <RUN_ID> --cancel-orders --wait --yes -o json
