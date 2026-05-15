@@ -14,15 +14,15 @@ Agent and human-friendly CLI for trading perpetual futures on [Phoenix](https://
 
 ### Example Agent Prompts
 
-> "Install Vulcan from github.com/Ellipsis-Labs/vulcan-cli, and register the MCP server with Claude Code"
->
 > "Give me a full portfolio snapshot: cross + isolated margin health, open positions with unrealized PnL %, resting orders, and any funding exposure I should know about."
 >
-> "Scan the top 5 markets by 24h volume — give me funding rate, mark price, and a one-line take on each."
+> "Scan the top 5 markets on Phoenix by 24h volume — give me funding rate, mark price, and a one-line take on each."
 >
 > "Open a $200 long on SOL then attach a TP at +5% and SL at -3%."
 >
 > "I need to long $5,000 of SOL. Run a TWAP over 20 minutes in 10 slices.
+>
+> "Watch BTC on 15m and alert me when EMA(9) crosses EMA(21), paper only"
 >
 > "Build a TA strategy that goes long when RSI(14) crosses above 30 on the 5m and exits when it crosses 70. Paper mode first, $500 per entry"
 
@@ -172,7 +172,8 @@ See `AGENTS.md` for full integration details.
 | `position`      | List, show, close, reduce, and attach TP/SL to positions.                                 |
 | `margin`        | Deposit, withdraw, transfer collateral, add isolated collateral, and view leverage tiers. |
 | `portfolio`     | Combined margin, positions, and orders snapshot.                                          |
-| `strategy`      | TWAP and grid runners, status, monitor, pause, stop, resume, finalize, and reports.       |
+| `strategy`      | TWAP, grid, and TA runners, status, monitor, pause, stop, resume, finalize, and reports.  |
+| `ta`            | Technical analysis — compute indicators, evaluate triggers, and multi-indicator reports.  |
 | `history`       | Trader history for trades, orders, collateral, funding, and PnL.                          |
 | `wallet`        | Create, import, export encrypted backups, list, select, and inspect wallets.              |
 | `account`       | Account info and registration.                                                            |
@@ -189,6 +190,23 @@ All commands support JSON output with `-o json`:
 { "ok": true, "data": { }, "meta": { } }
 { "ok": false, "error": { "category": "...", "code": "...", "message": "...", "retryable": false } }
 ```
+
+### Global Flags
+
+Available on every command:
+
+
+| Flag            | Purpose                                               |
+| --------------- | ----------------------------------------------------- |
+| `-o, --output`  | `json` or `table` (default `table`).                  |
+| `-w, --wallet`  | Use a specific stored wallet instead of the default.  |
+| `--dry-run`     | Simulate the action without submitting a transaction. |
+| `-y, --yes`     | Skip interactive confirmation prompts.                |
+| `--watch`       | Stream live updates via WebSocket where supported.    |
+| `-v, --verbose` | Verbose/debug logging to stderr.                      |
+| `--rpc-url`     | Override the Solana RPC endpoint.                     |
+| `--api-url`     | Override the Phoenix API endpoint.                    |
+
 
 ## Strategies
 
