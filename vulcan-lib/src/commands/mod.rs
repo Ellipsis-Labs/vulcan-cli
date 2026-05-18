@@ -19,4 +19,5 @@ pub mod strategy;
 pub mod ta;
 pub mod trade;
 pub mod trader_state;
+pub mod update;
 pub mod wallet;

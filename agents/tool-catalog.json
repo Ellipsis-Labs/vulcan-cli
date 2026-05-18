@@ -1,14 +1,14 @@
 {
   "schema_version": "1.0.0",
-  "cli_version": "0.1.0",
-  "description": "Machine-readable command catalog for vulcan. 57 tools across 13 groups.",
+  "cli_version": "0.5.5",
+  "description": "Machine-readable command catalog for vulcan. 58 tools across 13 groups.",
   "groups": {
     "market": "Market data: prices, orderbooks, candles, funding rates",
     "trade": "Order management: place, cancel, TP/SL",
     "position": "Position management: view, close, reduce, bracket orders",
     "margin": "Collateral management: deposit, withdraw, transfer, leverage tiers",
     "history": "Phoenix/Rise trader history: fills, orders, collateral, funding, PnL",
-    "status": "Health check and connectivity",
+    "status": "Health check, connectivity, and CLI update detection",
     "wallet": "Wallet creation, address, listing, and balance",
     "account": "Account info and registration",
     "auth": "Phoenix API wallet-session authentication",
@@ -413,6 +413,18 @@
       "dangerous": false,
       "parameters": [],
       "example": "vulcan status -o json"
+    },
+    {
+      "name": "vulcan_update_check",
+      "command": "vulcan update check",
+      "group": "status",
+      "description": "Check whether a newer Vulcan release is available on GitHub. Read-only: never modifies the binary. Returns current vs. latest version, `update_available`, the release URL, and an install-path-aware `update_command` hint (install.sh re-run for default or custom $HOME dirs, or 'use your package manager' for Homebrew/Nix/distro installs). Cached for 6 hours; pass `force_refresh: true` to bypass. The same fields are surfaced under `cli_update` in vulcan://agent/health. Surface to the user; do NOT run the update on their behalf.",
+      "auth_required": false,
+      "dangerous": false,
+      "parameters": [
+        { "name": "force_refresh", "type": "boolean", "required": false, "default": false, "description": "Bypass the on-disk cache and hit the GitHub API directly" }
+      ],
+      "example": "vulcan update check -o json"
     },
     {
       "name": "vulcan_wallet_create",

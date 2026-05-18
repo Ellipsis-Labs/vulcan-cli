@@ -137,6 +137,7 @@ pub struct AgentHealthResult {
     pub wallets: AgentWalletHealth,
     pub live_readiness: AgentLiveReadiness,
     pub paper: AgentPaperHealth,
+    pub cli_update: crate::commands::update::UpdateCheckResult,
     pub next_steps: Vec<String>,
 }
 
@@ -884,6 +885,7 @@ pub async fn health(
     let live_readiness = live_readiness_from_health(&status, &wallets);
     let api_auth_auto_login = crate::commands::auth::auto_login_if_possible(ctx).await;
     let api_auth = api_auth_auto_login.status.clone();
+    let cli_update = crate::commands::update::execute_check_for_health(ctx).await;
     let next_steps = health_next_steps(
         &status,
         &agent_skills,
@@ -892,6 +894,7 @@ pub async fn health(
         &paper,
         &live_readiness,
         &api_auth,
+        &cli_update,
     );
     Ok(AgentHealthResult {
         status,
@@ -904,6 +907,7 @@ pub async fn health(
         wallets,
         live_readiness,
         paper,
+        cli_update,
         next_steps,
     })
 }
@@ -939,6 +943,7 @@ fn live_readiness_from_health(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn health_next_steps(
     status: &StatusReport,
     agent_skills: &[AgentDoctorResult],
@@ -947,6 +952,7 @@ fn health_next_steps(
     paper: &AgentPaperHealth,
     live_readiness: &AgentLiveReadiness,
     api_auth: &crate::commands::auth::ApiAuthStatus,
+    cli_update: &crate::commands::update::UpdateCheckResult,
 ) -> Vec<String> {
     let mut steps = Vec::new();
     if !paper.initialized {
@@ -1011,6 +1017,12 @@ fn health_next_steps(
     }
     if !status.rpc.ok {
         steps.push("Check Solana RPC connectivity or override --rpc-url".to_string());
+    }
+    if cli_update.update_available {
+        steps.push(format!(
+            "A newer Vulcan release is available ({} -> {}). Tell the user; {}",
+            cli_update.current_version, cli_update.latest_version, cli_update.update_command
+        ));
     }
     steps
 }

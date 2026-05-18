@@ -73,6 +73,11 @@ async fn main() {
         Command::Strategy(cmd) => vulcan_lib::commands::strategy::execute(&ctx, cmd).await,
         Command::Ta(cmd) => vulcan_lib::commands::ta::execute(&ctx, cmd).await,
         Command::Status => vulcan_lib::commands::status::execute(&ctx).await,
+        Command::Update(cmd) => match cmd {
+            vulcan_lib::cli::update::UpdateCommand::Check { force } => {
+                vulcan_lib::commands::update::execute(&ctx, force).await
+            }
+        },
         Command::Setup => vulcan_lib::commands::setup::execute(&ctx).await,
         Command::Version => {
             println!("vulcan {}", env!("CARGO_PKG_VERSION"));
@@ -224,6 +229,7 @@ fn command_log_name(command: &Command) -> &'static str {
             StrategyCommand::Resume { .. } => "strategy.resume",
         },
         Command::Status => "status",
+        Command::Update(_) => "update.check",
         Command::Setup => "setup",
         Command::Version => "version",
         Command::AgentContext => "agent_context",

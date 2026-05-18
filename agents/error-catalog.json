@@ -315,6 +315,14 @@
     "WALLET_DEFAULT_FAILED": {
       "category": "io",
       "recovery": "Check filesystem permissions on ~/.vulcan/"
+    },
+    "UPDATE_CHECK_FAILED": {
+      "category": "network",
+      "recovery": "Could not reach GitHub Releases API. Check connectivity and retry; the cached value remains valid for 6 hours."
+    },
+    "UPDATE_RATE_LIMITED": {
+      "category": "rate_limit",
+      "recovery": "GitHub API rate limit exceeded (60 req/h unauthenticated). Wait an hour and retry, or rely on the 6-hour update cache."
     }
   }
 }

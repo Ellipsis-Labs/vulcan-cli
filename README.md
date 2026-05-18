@@ -54,6 +54,14 @@ Verify:
 vulcan version
 ```
 
+Check for newer releases:
+
+```bash
+vulcan update check
+```
+
+This is read-only — vulcan never modifies its own binary. When an update is available it prints a method-appropriate hint: re-run the install one-liner above for default or custom `~/.local/bin`-style installs, or use your package manager for Homebrew/Nix/distro installs. Agents that load `vulcan://agent/health` see the same information under `cli_update`.
+
 ## Quick Start
 
 ```bash

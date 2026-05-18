@@ -461,6 +461,21 @@ pub static TOOLS: &[ToolDef] = &[
         }),
     },
 
+    // ── Update (read-only) ────────────────────────────────────────────
+    ToolDef {
+        name: "vulcan_update_check",
+        description: "Check whether a newer Vulcan release is available on GitHub. Read-only: never modifies the binary. Returns current vs. latest version, a `update_available` boolean, the release URL, and an install-path-aware `update_command` hint (install.sh re-run for default/custom dirs, or 'use your package manager' for Homebrew/Nix/distro installs). Results are cached for 6 hours; pass `force_refresh: true` to bypass the cache. Surface the result to the user; do not run the update on their behalf.",
+        group: "status",
+        dangerous: false,
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "force_refresh": { "type": "boolean", "description": "Bypass the on-disk cache and hit the GitHub API directly.", "default": false }
+            },
+            "additionalProperties": false
+        }),
+    },
+
     // ── Wallet ────────────────────────────────────────────────────────
     ToolDef {
         name: "vulcan_wallet_create",

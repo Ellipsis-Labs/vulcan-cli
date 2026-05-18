@@ -367,6 +367,13 @@ impl VulcanMcpServer {
                 Ok(serde_json::to_value(result).unwrap())
             }
 
+            // ── Update ──────────────────────────────────────────────────
+            "vulcan_update_check" => {
+                let force = arg_bool_or(args, "force_refresh", false);
+                let result = commands::update::execute_check_inner(&self.ctx, force).await?;
+                Ok(serde_json::to_value(result).unwrap())
+            }
+
             // ── Wallet ────────────────────────────────────────────────────
             "vulcan_wallet_create" => {
                 let name = arg_str(args, "name")?;
@@ -1632,4 +1639,23 @@ fn arg_tpsl_levels(
         out.push(commands::trade::TpSlInput { price, size });
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn tool_catalog_cli_version_matches_crate() {
+        let catalog: serde_json::Value =
+            serde_json::from_str(include_str!("../../../agents/tool-catalog.json"))
+                .expect("tool-catalog.json must be valid JSON");
+        let catalog_version = catalog
+            .get("cli_version")
+            .and_then(|v| v.as_str())
+            .expect("tool-catalog.json must have a string `cli_version`");
+        assert_eq!(
+            catalog_version,
+            env!("CARGO_PKG_VERSION"),
+            "agents/tool-catalog.json `cli_version` is out of sync with vulcan-lib Cargo.toml — bump it on every release"
+        );
+    }
 }

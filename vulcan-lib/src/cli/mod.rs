@@ -12,6 +12,7 @@ pub mod position;
 pub mod strategy;
 pub mod ta;
 pub mod trade;
+pub mod update;
 pub mod wallet;
 
 use crate::output::OutputFormat;
@@ -116,6 +117,10 @@ pub enum Command {
 
     /// Check configuration, connectivity, wallet, and registration status
     Status,
+
+    /// Check whether a newer Vulcan release is available on GitHub
+    #[command(subcommand)]
+    Update(update::UpdateCommand),
 
     /// Interactive setup wizard — wallet, config, and connectivity
     Setup,

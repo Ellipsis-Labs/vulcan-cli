@@ -153,6 +153,10 @@ impl VulcanError {
             "EXCHANGE_FETCH_FAILED" | "TRADERS_FETCH_FAILED" | "MARKETS_FETCH_FAILED" => {
                 "Run 'vulcan status' to check API connectivity"
             }
+            "UPDATE_CHECK_FAILED" => "Network error while checking GitHub Releases — try again later",
+            "UPDATE_RATE_LIMITED" => {
+                "GitHub API rate limit exceeded — wait an hour and retry, or run 'vulcan update check --force' less often"
+            }
             _ if self.category.is_retryable() => "Transient error — safe to retry",
             _ => "",
         }
