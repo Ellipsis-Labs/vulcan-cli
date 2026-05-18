@@ -602,7 +602,7 @@ async fn build_levels(
     }
     let mut levels = Vec::new();
     for (idx, price) in bids.into_iter().enumerate() {
-        let price = validate_tick_price(ctx, symbol, price).await?;
+        let price = snap_tick_price(ctx, symbol, price).await?;
         levels.push(generated_level(
             idx,
             StrategySide::Buy,
@@ -614,7 +614,7 @@ async fn build_levels(
         )?);
     }
     for (idx, price) in asks.into_iter().enumerate() {
-        let price = validate_tick_price(ctx, symbol, price).await?;
+        let price = snap_tick_price(ctx, symbol, price).await?;
         levels.push(generated_level(
             idx,
             StrategySide::Sell,
@@ -749,6 +749,40 @@ fn optional_part(value: Option<&&str>) -> Result<Option<f64>, VulcanError> {
         }),
         None => Ok(None),
     }
+}
+
+// Snap a derived price (from center_on_mark/width_pct generation) to the
+// market's tick. Strict validation is reserved for user-supplied prices where
+// silent snapping would mask typos; see validate_tick_price.
+async fn snap_tick_price(
+    ctx: &AppContext,
+    symbol: &str,
+    price: f64,
+) -> Result<f64, VulcanError> {
+    let metadata = ctx.metadata().await?;
+    let calc = metadata.get_market_calculator(symbol).ok_or_else(|| {
+        VulcanError::validation("UNKNOWN_MARKET", format!("Unknown market: {}", symbol))
+    })?;
+    snap_price_with_calc(calc, price)
+}
+
+fn snap_price_with_calc(
+    calc: &phoenix_rise::math::MarketCalculator,
+    price: f64,
+) -> Result<f64, VulcanError> {
+    if price <= 0.0 {
+        return Err(VulcanError::validation(
+            "INVALID_GRID_PRICE",
+            "grid prices must be positive",
+        ));
+    }
+    let ticks = calc.price_to_ticks(price).map_err(|e| {
+        VulcanError::validation(
+            "INVALID_GRID_PRICE_TICK",
+            format!("price {} is not valid: {}", price, e),
+        )
+    })?;
+    Ok(calc.ticks_to_price(ticks))
 }
 
 async fn validate_tick_price(
@@ -2609,6 +2643,40 @@ mod tests {
         assert_eq!(
             validate_grid_bounds(120.0, 90.0, 110.0).unwrap_err().code,
             "GRID_MARK_OUT_OF_RANGE"
+        );
+    }
+
+    #[test]
+    fn snap_price_with_calc_quantizes_to_nearest_tick() {
+        use phoenix_rise::math::{MarketCalculator, QuoteLotsPerBaseLotPerTick, WrapperNum};
+
+        // base_lot_decimals=2, tick_size=100 → 1 tick = $0.01 (ZEC-like).
+        let calc = MarketCalculator::new(2, QuoteLotsPerBaseLotPerTick::new(100));
+
+        // The exact failure from the ZEC issue log: 512.7309 is not tick-aligned.
+        let snapped = snap_price_with_calc(&calc, 512.7309).unwrap();
+        assert!(
+            (snapped - 512.73).abs() < 1e-9,
+            "expected 512.73, got {}",
+            snapped
+        );
+
+        // Already-aligned price round-trips unchanged.
+        let already = snap_price_with_calc(&calc, 512.73).unwrap();
+        assert!((already - 512.73).abs() < 1e-9);
+
+        // Rounds up when the unaligned residual is past the halfway point.
+        let up = snap_price_with_calc(&calc, 512.736).unwrap();
+        assert!((up - 512.74).abs() < 1e-9, "expected 512.74, got {}", up);
+
+        // Non-positive prices are rejected with the same code grid validation uses.
+        assert_eq!(
+            snap_price_with_calc(&calc, 0.0).unwrap_err().code,
+            "INVALID_GRID_PRICE"
+        );
+        assert_eq!(
+            snap_price_with_calc(&calc, -1.0).unwrap_err().code,
+            "INVALID_GRID_PRICE"
         );
     }
 

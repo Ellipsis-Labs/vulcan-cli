@@ -1,6 +1,6 @@
 [package]
 name = "vulcan"
-version = "0.5.3"
+version = "0.5.4"
 edition = "2021"
 description = "Vulcan — AI-native CLI for Phoenix Perpetuals DEX on Solana"
 
