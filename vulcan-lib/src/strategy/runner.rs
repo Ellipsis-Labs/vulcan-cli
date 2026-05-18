@@ -154,11 +154,11 @@ pub(crate) fn record_strategy_event<T: Serialize>(
 
 fn render_strategy_tick_diagnostic(tick: &StrategyTick) {
     eprintln!(
-        "[{}:{}] tick {}/{} {} {} planned={} executable={} base_lots={}",
+        "[{}:{}] tick {} {} {} {} planned={} executable={} base_lots={}",
         tick.strategy,
         tick.run_id,
         tick.tick,
-        tick.slices_total,
+        format_tick_progress(tick),
         tick.side.as_str(),
         tick.symbol,
         format_optional_usdc(tick.planned_action.slice_notional_usdc),
@@ -218,6 +218,19 @@ fn format_optional_usdc(value: Option<f64>) -> String {
     value
         .map(|v| format!("{:.4} USDC", v))
         .unwrap_or_else(|| "n/a".to_string())
+}
+
+fn format_tick_progress(tick: &StrategyTick) -> String {
+    // For grid runs, `slices_total` mirrors the ledger slice count rather than a
+    // tick denominator, so "tick N/M" would suggest progress through a fixed
+    // schedule that doesn't exist. Print the slice count explicitly instead.
+    if tick.strategy == "grid" {
+        format!("(slices: {})", tick.slices_total)
+    } else if tick.slices_total > 0 && tick.slices_total < u32::MAX {
+        format!("of {}", tick.slices_total)
+    } else {
+        String::new()
+    }
 }
 
 #[allow(dead_code)]

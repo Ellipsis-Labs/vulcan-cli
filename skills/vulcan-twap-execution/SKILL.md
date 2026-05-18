@@ -31,15 +31,15 @@ Vulcan has a first-class TWAP strategy runner. Prefer it when the user wants a s
 vulcan strategy twap start --symbol SOL --side buy --notional-usdc 1000 --slices 5 --interval-seconds 30 --mode paper -o json
 ```
 
-The strategy runner owns the loop, supports sub-minute foreground cadence, checks live margin feasibility before launch, prints each tick during execution, writes structured tick logs and slice ledgers under `~/.vulcan/strategy-runs`, and can produce `strategy monitor`, `strategy status`, and `strategy report` outputs. For MCP agents, start TWAPs with `detached: true` so the tool returns a `run_id` immediately; use `vulcan_strategy_monitor` for compact non-blocking checkpoints and `vulcan_strategy_wait_next_tick` only when actively waiting for the next expected tick.
+The strategy runner owns the loop, supports sub-minute foreground cadence, checks live margin feasibility before launch, prints each tick during execution, writes structured tick logs and slice ledgers under `~/.vulcan/strategy-runs`, and can produce `strategy monitor`, `strategy status`, and `strategy report` outputs.
 
-Important output behavior for agents:
+**Launch and monitoring contract for multi-tick MCP runs: see [CONTEXT.md § Strategy Monitoring (Detached Runs)](../../CONTEXT.md#strategy-monitoring-detached-runs).** Do not restate or interpret that contract here — apply it directly.
 
-- Strategy runs must surface tick execution logs by default.
+TWAP-specific output behavior:
+
 - CLI table mode prints each tick to stdout while the run is active.
 - CLI JSON mode keeps stdout as the final JSON report and prints tick summaries to stderr while the run is active.
-- MCP `vulcan_strategy_twap_start` must use `detached: true` for user-visible progress: the call returns `run_id`, then the agent stores `last_tick_seen=0`, backfills with status `since_tick=0`, uses `vulcan_strategy_monitor` for compact checkpoints, and calls `vulcan_strategy_wait_next_tick(after_tick=last_tick_seen)` only when actively waiting for the next expected tick. Do not use raw shell `sleep`; do not ask whether to continue polling after launch.
-- Report each executed TWAP tick as a compact Markdown table row with full transaction signature, fill, cumulative filled size/notional, position/exposure, and next tick. Do not abbreviate transaction signatures.
+- Every tick is a fill (or a `dry_run` placeholder). Report each as a compact Markdown table row with full transaction signature, fill, cumulative filled size/notional, position/exposure, and next tick. Lead with execution progress, not equity.
 - Do not launch a multi-minute live TWAP as one blocking MCP call unless the user explicitly asks for final-only output.
 
 Use the Vulcan runner for standard market-order TWAPs. Use the agent client's looping/background execution only for observe-only workflows, unsupported strategy shapes, or explicitly requested manual workflows. If a requested live mode or strategy shape is unsupported, do **not** treat that as permission to self-drive live slices with raw `vulcan_trade` calls. Offer supported runner modes, a reduced/manual plan, or ask for an explicit typed instruction requesting a manual live fallback. Do not write a custom scheduler script if the Vulcan runner, agent terminal, MCP tools, or app loop can execute the slices directly.
@@ -185,18 +185,22 @@ Present before starting:
 
 Use `vulcan strategy twap start` or `vulcan_strategy_twap_start` for standard market-order TWAPs. The runner owns the loop, tick display, ledger, and report.
 
-For each runner tick:
+### Per-Tick Render Checklist (Required)
 
-Display each tick using the shared tick contract: strategy, symbol, slice number, mode, timestamp, market snapshot, account or paper state, planned slice, guardrail checks or trigger outcomes, execution result, and next slice timing.
+This checklist is the canonical per-tick render contract for TWAP and is binding on every executed slice. It is enumerated in Hard Rule 12 below; future edits to this skill must not drop or condense this section.
 
-For TWAP, lead with execution progress rather than account equity. Equity blends fees and mark-to-market movement, so it can be confusing as the headline. Each tick should show:
+Every tick must surface, in this order:
 
-- Planned vs executable slice size: even target notional/tokens, executable base lots, executable notional/tokens, and any rounding/catch-up note.
-- Slice fill: price, tokens, notional, fee, tx signature or paper fill ID.
-- Cumulative TWAP progress: slices filled, cumulative tokens, cumulative notional, VWAP, cumulative fees.
-- Current position: side, total tokens/lots, mark, position notional, uPnL, and exposure ratio/leverage-equivalent (`position_notional / equity_or_collateral`).
-- Account health: equity/collateral and available funds as a secondary line only.
-- Next tick: remaining slices, next fire time, and pause/cancel handle.
+1. **Header**: strategy, symbol, slice number (e.g. `3/10`), mode, timestamp.
+2. **Market snapshot**: mark, mid, funding rate, and bps drift from the start mark (`max_price_drift_bps` guardrail context).
+3. **Planned vs executable slice**: even target notional/tokens, executable base lots, executable notional/tokens, and any rounding or catch-up note.
+4. **Execution result**: fill price, fill tokens, fill notional, fee, full tx signature (or paper fill ID). Never abbreviate the signature.
+5. **Cumulative TWAP progress**: slices filled, cumulative tokens, cumulative notional, VWAP, cumulative fees.
+6. **Current position**: side, total tokens/lots, mark, position notional, uPnL (USDC and %), exposure ratio / leverage-equivalent (`position_notional / equity_or_collateral`).
+7. **Account health (secondary line)**: equity/collateral and available funds.
+8. **Next tick**: remaining slices, next fire time, and pause/cancel handle.
+
+Lead with execution progress over account equity — equity blends fees and mark-to-market movement, so it is misleading as a headline number.
 
 ### Drift Reporting
 
@@ -220,14 +224,13 @@ The runner waits the agreed interval and repeats until all slices complete, the 
 
 ### Agent Tick Logging
 
-Before launching a TWAP, choose the execution path that gives progress visibility:
+The MCP launch and monitoring contract lives in [CONTEXT.md § Strategy Monitoring (Detached Runs)](../../CONTEXT.md#strategy-monitoring-detached-runs). For CLI execution paths:
 
 1. **CLI table mode**: relay each printed tick.
 2. **CLI JSON mode**: relay each stderr tick summary while preserving stdout JSON for the final report.
-3. **MCP/live signing path**: use `vulcan_strategy_twap_start` with `detached: true`. Call `vulcan_strategy_wait_next_tick` before each expected slice deadline, relay any new tick immediately, and continue until the run is terminal. Use compact `vulcan_strategy_status` with `since_tick` only for manual checks. Do not use raw shell `sleep`, do not choose "mid-run" and "end" checkpoints for execution monitoring, and do not ask whether to keep polling after launch. Use `vulcan_strategy_pause` for a resumable pause and `vulcan_strategy_stop` for permanent stop.
-4. **Long background run**: if the client supports background terminals, start the runner in the background and periodically read/relay the output. Keep the run ID visible.
+3. **Long background run**: if the client supports background terminals, start the runner in the background and periodically read/relay the output. Keep the run ID visible.
 
-Do not let a strategy run silently. Every executed slice must be visible to the user as soon as the agent observes it through live terminal diagnostics or status polling. Do not batch executed slices into mid-run or end-only summaries. The agent cycle ends only after a terminal status and final report are delivered, unless the user explicitly asks to stop monitoring.
+Use `vulcan_strategy_pause` for a resumable pause and `vulcan_strategy_stop` for permanent stop.
 
 ## Manual Fallback Loop
 
@@ -317,4 +320,5 @@ Final reports should include these columns when available: slice, time, fill ID 
 9. If using a recurring scheduler, store and report the job ID/run label on every tick and delete the job immediately after completion or pause.
 10. The Vulcan runner supports sub-minute foreground cadence. Apply a 60-second practical minimum only to agent-managed scheduler fallbacks that cannot wake faster.
 11. Never round a user-requested cadence up or down and continue automatically. Ask first, wait for the answer, then schedule.
+12. Every executed slice must surface the full eight-field [Per-Tick Render Checklist](#per-tick-render-checklist-required) above — header, market snapshot with drift, planned vs executable, execution result with full tx signature, cumulative progress, position, account health, and next tick. Do not condense or skip fields when the data is available from the tick log.
 

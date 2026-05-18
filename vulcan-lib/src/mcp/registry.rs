@@ -746,7 +746,7 @@ pub static TOOLS: &[ToolDef] = &[
     // ── Strategy runners ───────────────────────────────────────────────
     ToolDef {
         name: "vulcan_strategy_twap_start",
-        description: "Run a first-class market-order TWAP strategy with tick logs, lot-aware base-lot conversion, launch-time margin feasibility checks, and a persisted slice ledger. Present modes as Paper mode, Live mode with confirmation required, Live mode with automatic execution, and Plan mode with dry run. Before launch, ask whether the user wants cross-margin or isolated-margin execution, plus additional triggers and safety guardrails such as TP/SL intent, max leverage/exposure, max total notional, max per-step notional, and drift limits. Paper, dry_run, live confirm_each, and live auto_execute are supported. MCP agents must set detached=true for multi-tick runs, store last_tick_seen=0, backfill startup ticks with status since_tick=0, use vulcan_strategy_monitor for compact checkpoints, and call vulcan_strategy_wait_next_tick(after_tick=last_tick_seen) only when actively waiting. Report execution ticks in compact tables with full transaction signatures. Live modes are dynamically treated as dangerous and require acknowledged=true plus --allow-dangerous.",
+        description: "Run a first-class market-order TWAP strategy with tick logs, lot-aware base-lot conversion, launch-time margin feasibility checks, and a persisted slice ledger. Present modes as Paper mode, Live mode with confirmation required, Live mode with automatic execution, and Plan mode with dry run. Before launch, ask whether the user wants cross-margin or isolated-margin execution, plus additional triggers and safety guardrails such as TP/SL intent, max leverage/exposure, max total notional, max per-step notional, and drift limits. Paper, dry_run, live confirm_each, and live auto_execute are supported. Launch and monitoring contract for multi-tick MCP runs: see CONTEXT.md § Strategy Monitoring (Detached Runs). TWAP-specific tick narration: every tick is a fill — lead with execution progress (planned vs executable slice, fill, cumulative VWAP) over equity, and report each slice with full transaction signature. Live modes are dynamically treated as dangerous and require acknowledged=true plus --allow-dangerous.",
         group: "strategy",
         dangerous: false,
         schema: || json!({
@@ -769,7 +769,7 @@ pub static TOOLS: &[ToolDef] = &[
                 "reconcile_attempts": { "type": "integer", "description": "Number of history reconciliation attempts per live step" },
                 "reconcile_delay_ms": { "type": "integer", "description": "Milliseconds between reconciliation attempts" },
                 "acknowledged": { "type": "boolean", "description": "Required for live confirm_each or auto_execute; paper and dry_run do not require it" },
-                "detached": { "type": "boolean", "description": "Return immediately with run_id and let the Vulcan MCP server execute the TWAP in the background; agents should backfill since_tick=0, use monitor checkpoints, and wait_next_tick only when actively waiting", "default": false },
+                "detached": { "type": "boolean", "description": "Return immediately with run_id; the agent enters the monitoring loop automatically (see CONTEXT.md § Strategy Monitoring (Detached Runs))", "default": false },
                 "no_sleep": { "type": "boolean", "description": "Skip sleeping between slices for smoke tests", "default": false }
             },
             "required": ["symbol", "side", "slices"],
@@ -778,7 +778,7 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "vulcan_strategy_grid_start",
-        description: "Run a first-class grid trading strategy with persisted level ledger, optional per-level TP/SL intent, paper/dry_run/live modes, launch-time margin feasibility checks, replacement maintenance ticks, optional run-until-stopped lifecycle, stale-run detection, and local runner locking. Before launch, ask whether the user wants cross-margin or isolated-margin execution. Cross-margin live grids use multi-limit transactions; isolated live grids submit individual isolated limit orders and can transfer optional collateral on the first order. Live maintenance treats missing resting levels as filled and submits flipped replacement orders. TP/SL activation remains pending until fills can be mapped authoritatively. Live modes are dynamically treated as dangerous and require acknowledged=true plus --allow-dangerous. For long-lived MCP runs, set detached=true, report the run ID, backfill startup ticks with status since_tick=0, use vulcan_strategy_monitor for non-blocking checkpoints, report fills/replacements in compact tables with full transaction signatures, and use vulcan_strategy_finalize for explicit cleanup.",
+        description: "Run a first-class grid trading strategy with persisted level ledger, optional per-level TP/SL intent, paper/dry_run/live modes, launch-time margin feasibility checks, replacement maintenance ticks, optional run-until-stopped lifecycle, stale-run detection, and local runner locking. Before launch, ask whether the user wants cross-margin or isolated-margin execution. Cross-margin live grids use multi-limit transactions; isolated live grids submit individual isolated limit orders and can transfer optional collateral on the first order. Live maintenance treats missing resting levels as filled and submits flipped replacement orders. TP/SL activation remains pending until fills can be mapped authoritatively. Live modes are dynamically treated as dangerous and require acknowledged=true plus --allow-dangerous. Launch and monitoring contract for multi-tick MCP runs: see CONTEXT.md § Strategy Monitoring (Detached Runs). Grid-specific tick narration: most ticks are no-fill maintenance — send a concise heartbeat per tick (do not go silent). Report fills/replacements in compact tables with full transaction signatures. Per-level TP/SL is intent only until a bracket action is actually recorded. The runner is a local process, not a daemon — if lifecycle.stale=true the agent stops claiming the grid is maintained and tells the user to resume/reconcile. Use vulcan_strategy_finalize for explicit cleanup.",
         group: "strategy",
         dangerous: false,
         schema: || json!({
@@ -812,7 +812,7 @@ pub static TOOLS: &[ToolDef] = &[
                 "reconcile_attempts": { "type": "integer", "description": "Number of reconciliation attempts" },
                 "reconcile_delay_ms": { "type": "integer", "description": "Milliseconds between reconciliation attempts" },
                 "acknowledged": { "type": "boolean", "description": "Required for live confirm_each or auto_execute; paper and dry_run do not require it" },
-                "detached": { "type": "boolean", "description": "Return immediately with run_id and execute in the background; agents should backfill since_tick=0, use monitor checkpoints, and wait_next_tick only when actively waiting", "default": false },
+                "detached": { "type": "boolean", "description": "Return immediately with run_id; the agent enters the monitoring loop automatically (see CONTEXT.md § Strategy Monitoring (Detached Runs))", "default": false },
                 "no_sleep": { "type": "boolean", "description": "Skip sleeping between ticks for smoke tests", "default": false }
             },
             "required": ["symbol", "levels_per_side"],
@@ -971,7 +971,7 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "vulcan_strategy_ta_start",
-        description: "Start a technical-analysis-driven strategy run. The `config` object describes rules of (condition, action): each tick the runner evaluates rules top-down and the first whose composable boolean condition fires (and is not cooldown-locked) dispatches its action (open/close/reduce). Conditions can compose `compare`, `crosses`, `all`/`any`/`not` over indicators, price, and constants. Live modes require acknowledged=true.",
+        description: "Start a technical-analysis-driven strategy run. The `config` object describes rules of (condition, action): each tick the runner evaluates rules top-down and the first whose composable boolean condition fires (and is not cooldown-locked) dispatches its action (open/close/reduce). Conditions can compose `compare`, `crosses`, `all`/`any`/`not` over indicators, price, and constants. Reuses TWAP/grid scaffolding (run id, ledger, control IPC, pause/stop, monitor/status/wait_next_tick/report). Launch and monitoring contract for multi-tick MCP runs: see CONTEXT.md § Strategy Monitoring (Detached Runs). TA-specific tick narration: report which rule fired (or 'no rule matched') per tick, plus the indicator values that drove the decision. Live modes require acknowledged=true.",
         group: "strategy",
         dangerous: false,
         schema: || json!({
@@ -986,7 +986,7 @@ pub static TOOLS: &[ToolDef] = &[
                 "max_ticks": { "type": "integer", "default": 60 },
                 "run_until_stopped": { "type": "boolean", "default": false },
                 "run_label": { "type": "string" },
-                "detached": { "type": "boolean", "default": false },
+                "detached": { "type": "boolean", "description": "Return immediately with run_id; the agent enters the monitoring loop automatically (see CONTEXT.md § Strategy Monitoring (Detached Runs))", "default": false },
                 "max_total_notional_usdc": { "type": "number" },
                 "max_step_notional_usdc": { "type": "number" },
                 "max_price_drift_bps": { "type": "number" },

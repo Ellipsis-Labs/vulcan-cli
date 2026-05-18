@@ -51,6 +51,8 @@ Preflight's `Wallet:` line shows the resolved source — `CliFlag` (from `-w`) o
 
 `vulcan_strategy_ta_start` accepts the same config as a structured object. Live modes require `acknowledged: true`. Status/monitor/control tools are shared with TWAP and grid.
 
+**Launch and monitoring contract for multi-tick MCP runs: see [CONTEXT.md § Strategy Monitoring (Detached Runs)](../../CONTEXT.md#strategy-monitoring-detached-runs).** TA-specific tick narration: report which rule fired (or "no rule matched") per tick, plus the indicator values that drove the decision. The runner records both, so the agent's job is to surface them — not to evaluate triggers in agent code.
+
 ## Config Shape
 
 ```json

@@ -158,7 +158,13 @@ vulcan_trade_orders → { symbol: "SOL" }
 
 Periodically check for fills and replace completed orders:
 
-Display every maintenance tick with the shared tick contract: strategy, symbol, tick number, mode, timestamp, market snapshot, account or paper state, missing/filled grid levels, planned replacements, guardrail checks or trigger outcomes, execution result, and next tick timing. Live grid maintenance treats missing resting levels as filled and submits flipped replacement orders on later ticks; TP/SL activation remains pending until fills can be mapped authoritatively. For long-lived grids, prefer `run_until_stopped: true` plus `detached: true`, then store `last_tick_seen=0`, backfill with status `since_tick=0`, use `vulcan_strategy_monitor` for compact non-blocking checkpoints, and call `vulcan_strategy_wait_next_tick(after_tick=last_tick_seen)` only when actively waiting for the next expected tick. Report fills/replacements as compact tables with full transaction signatures. No-fill ticks still require monitoring: send a concise heartbeat when reporting and continue unless the user explicitly asks to stop monitoring, the run becomes terminal, or status reports stale.
+Display every maintenance tick with the shared tick contract: strategy, symbol, tick number, mode, timestamp, market snapshot, account or paper state, missing/filled grid levels, planned replacements, guardrail checks or trigger outcomes, execution result, and next tick timing. Live grid maintenance treats missing resting levels as filled and submits flipped replacement orders on later ticks; TP/SL activation remains pending until fills can be mapped authoritatively.
+
+**Launch and monitoring contract for multi-tick MCP runs: see [CONTEXT.md § Strategy Monitoring (Detached Runs)](../../CONTEXT.md#strategy-monitoring-detached-runs).** For long-lived grids, that means `run_until_stopped: true` plus `detached: true`. Grid-specific tick narration:
+
+- Most ticks are no-fill maintenance — send a concise heartbeat per tick, do not go silent.
+- Report fills/replacements as compact tables with full transaction signatures.
+- Per-level TP/SL is intent only until a bracket action is recorded; never claim it is active just because it was specified in the plan.
 
 Vulcan's grid runner is a local process, not an always-on daemon. If the machine sleeps, the process exits, or networking is unavailable, resting orders remain live but monitoring/replacements stop. `vulcan_strategy_monitor` exposes lifecycle staleness and runner-lock state; if `lifecycle.stale` is true, stop and tell the user to resume/reconcile instead of claiming the grid is maintained.
 

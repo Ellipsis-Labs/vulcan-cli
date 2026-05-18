@@ -443,11 +443,14 @@ async fn run_grid_config(
             symbol: config.symbol.clone(),
             side: StrategySide::Buy,
             tick: tick_number,
-            slices_total: if config.run_until_stopped {
-                tick_number
-            } else {
-                config.ticks
-            },
+            // For grid, `slices_total` mirrors the ledger slice count (initial
+            // planned levels + replacement slices recorded over the run). Keeping
+            // it aligned with `summary.slices_total` prevents two same-named
+            // fields from carrying different units in the same response. The
+            // planned tick budget is derivable from
+            // `progress.remaining_slices` + current tick number for finite runs;
+            // run-until-stopped grids have no fixed denominator.
+            slices_total: ledger.slices_total,
             timestamp: Utc::now().to_rfc3339(),
             elapsed_ms: started.elapsed().as_millis(),
             market,
@@ -1070,6 +1073,7 @@ async fn maintain_grid(
                 reconcile_live_level_orders(ctx, config, ledger, &HashSet::new()).await?;
             let mut placed = 0_usize;
             let mut tx_signature = None;
+            let mut just_placed: HashSet<String> = HashSet::new();
             if !observation.missing_levels.is_empty() {
                 // Only replace levels that the reconciler has authoritatively
                 // transitioned to Filled via trade history. Levels that are
@@ -1086,8 +1090,7 @@ async fn maintain_grid(
                     .filter_map(|level| replacement_level(config, level))
                     .collect::<Vec<_>>();
                 if !replacements.is_empty() {
-                    let just_placed: HashSet<String> =
-                        replacements.iter().map(|level| level.id.clone()).collect();
+                    just_placed = replacements.iter().map(|level| level.id.clone()).collect();
                     let result =
                         place_live_replacements(ctx, config, ledger, &replacements).await?;
                     placed = result.placed;
@@ -1102,9 +1105,8 @@ async fn maintain_grid(
                     action: "live_grid_maintenance_replace".to_string(),
                     tx_signature,
                     note: Some(format!(
-                        "{} Placed {} replacement order(s). TP/SL activation remains pending until fills can be mapped authoritatively.",
-                        observation.summary(),
-                        placed
+                        "{} TP/SL activation remains pending until fills can be mapped authoritatively.",
+                        observation.maintenance_summary(placed, &just_placed),
                     )),
                     ..Default::default()
                 },
@@ -1510,6 +1512,51 @@ impl LiveGridObservation {
                 self.missing.join(", ")
             )
         }
+    }
+
+    /// Maintenance-tick summary that distinguishes a newly-placed replacement
+    /// (awaiting orderbook propagation) from a level that is genuinely missing
+    /// from the book. The plain `summary()` lumps both into "missing", which
+    /// inverts cause and effect when the runner itself just submitted the
+    /// "missing" order in this same tick.
+    fn maintenance_summary(&self, placed: usize, just_placed: &HashSet<String>) -> String {
+        let (awaiting, truly_missing): (Vec<&GridLevel>, Vec<&GridLevel>) = self
+            .missing_levels
+            .iter()
+            .partition(|level| just_placed.contains(&level.id));
+        let mut parts = vec![format!(
+            "Reconciled {}/{} planned live levels resting.",
+            self.resting, self.total
+        )];
+        parts.push(format!("Placed {} replacement order(s).", placed));
+        if !awaiting.is_empty() {
+            parts.push(format!(
+                "Awaiting propagation for {}: {}.",
+                awaiting.len(),
+                awaiting
+                    .iter()
+                    .map(|level| level.id.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if !truly_missing.is_empty() {
+            parts.push(format!(
+                "Unresolved missing {}: {}.",
+                truly_missing.len(),
+                truly_missing
+                    .iter()
+                    .map(|level| format!(
+                        "{} {} @ {:.2}",
+                        level.entry_side.as_str(),
+                        level.id,
+                        level.entry_price
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        parts.join(" ")
     }
 
     fn inspection(&self) -> GridLiveOrderInspection {
@@ -3013,5 +3060,67 @@ mod tests {
             .collect();
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].id, "buy-2");
+    }
+
+    fn level(id: &str, side: StrategySide, price: f64) -> GridLevel {
+        GridLevel {
+            id: id.to_string(),
+            entry_side: side,
+            entry_price: price,
+            size_lots: 1,
+            tokens: 0.01,
+            take_profit_price: None,
+            stop_loss_price: None,
+            source_level_id: None,
+        }
+    }
+
+    #[test]
+    fn maintenance_summary_separates_pending_propagation_from_unresolved() {
+        // The runner just placed `buy-repl-555` as a replacement for a filled
+        // sell. The observation re-runs against the book before the new order
+        // has propagated, so it still appears in `missing_levels`. The summary
+        // must label it as "awaiting propagation", not "missing", because the
+        // runner itself is the cause. A truly unresolved level (no
+        // just_placed entry) stays in the "unresolved missing" bucket.
+        let just_placed: HashSet<String> = ["buy-repl-555".to_string()].into_iter().collect();
+        let observation = LiveGridObservation {
+            resting: 5,
+            total: 7,
+            missing: vec![
+                "buy buy-repl-555 @ 555.15".to_string(),
+                "buy buy-3 @ 530.00".to_string(),
+            ],
+            missing_levels: vec![
+                level("buy-repl-555", StrategySide::Buy, 555.15),
+                level("buy-3", StrategySide::Buy, 530.00),
+            ],
+            harvested: Vec::new(),
+        };
+        let note = observation.maintenance_summary(1, &just_placed);
+        assert!(note.contains("Reconciled 5/7"));
+        assert!(note.contains("Placed 1 replacement"));
+        assert!(note.contains("Awaiting propagation for 1: buy-repl-555"));
+        assert!(note.contains("Unresolved missing 1"));
+        assert!(note.contains("buy buy-3 @ 530.00"));
+        // The plain summary would have called the just-placed order "missing";
+        // the maintenance summary must not.
+        assert!(!note.contains("missing 2"));
+    }
+
+    #[test]
+    fn maintenance_summary_omits_empty_buckets() {
+        let observation = LiveGridObservation {
+            resting: 6,
+            total: 6,
+            missing: Vec::new(),
+            missing_levels: Vec::new(),
+            harvested: Vec::new(),
+        };
+        let note = observation.maintenance_summary(0, &HashSet::new());
+        assert_eq!(
+            note,
+            "Reconciled 6/6 planned live levels resting. Placed 0 replacement order(s)."
+        );
     }
 }

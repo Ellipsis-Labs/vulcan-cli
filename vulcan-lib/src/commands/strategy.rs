@@ -28,6 +28,14 @@ pub struct StrategyStatusResult {
     pub lifecycle: StrategyLifecycleStatus,
     pub terminal: bool,
     pub timed_out: bool,
+    /// True when the run is terminal AND `latest_tick.position` reports a non-flat
+    /// position. The snapshot is frozen at the last tick and may not reflect chain
+    /// state if positions were closed after the runner exited. Consumers must call
+    /// `vulcan_position_list` for authoritative current state before sizing trades.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub position_snapshot_stale: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position_snapshot_warning: Option<String>,
     pub ledger: Option<StrategyRunLedger>,
 }
 
@@ -620,6 +628,8 @@ fn status_inner(
     let next_tick = latest_tick.as_ref().map(|tick| tick.next_tick.clone());
     let terminal = is_terminal_status(&summary.status);
     let lifecycle = lifecycle_status(&summary, ledger.as_ref(), latest_tick.as_ref(), terminal);
+    let (position_snapshot_stale, position_snapshot_warning) =
+        stale_position_warning(latest_tick.as_ref(), terminal);
     Ok(StrategyStatusResult {
         summary,
         latest_tick,
@@ -628,8 +638,32 @@ fn status_inner(
         lifecycle,
         terminal,
         timed_out,
+        position_snapshot_stale,
+        position_snapshot_warning,
         ledger: include_ledger.then_some(ledger).flatten(),
     })
+}
+
+fn stale_position_warning(
+    latest_tick: Option<&StrategyTick>,
+    terminal: bool,
+) -> (bool, Option<String>) {
+    if !terminal {
+        return (false, None);
+    }
+    let Some(tick) = latest_tick else {
+        return (false, None);
+    };
+    if tick.position.side.is_none() && tick.position.size_tokens == 0.0 {
+        return (false, None);
+    }
+    let warning = format!(
+        "latest_tick.position is a frozen snapshot from tick {} at {} and the run is {}; \
+         the chain position may have changed since (e.g. closed in another session). \
+         Call vulcan_position_list for authoritative current state before sizing trades.",
+        tick.tick, tick.timestamp, "terminal"
+    );
+    (true, Some(warning))
 }
 
 fn lifecycle_status(
@@ -1330,6 +1364,9 @@ impl TableRenderable for StrategyStatusResult {
                 println!("  Stale: {}", hint);
             }
         }
+        if let Some(warning) = &self.position_snapshot_warning {
+            println!("  Position snapshot: {}", warning);
+        }
         if let Some(ledger) = &self.ledger {
             println!();
             render_ledger(ledger);
@@ -1750,5 +1787,73 @@ mod tests {
             .recovery_hint
             .unwrap()
             .contains("vulcan strategy resume"));
+    }
+
+    fn tick_with_position(tick: u32, side: Option<&str>, size_tokens: f64) -> StrategyTick {
+        StrategyTick {
+            run_id: "run".to_string(),
+            strategy: "grid".to_string(),
+            mode: crate::strategy::StrategyMode::AutoExecute,
+            symbol: "ZEC".to_string(),
+            side: crate::strategy::StrategySide::Buy,
+            tick,
+            slices_total: 0,
+            timestamp: "2026-05-18T00:00:00Z".to_string(),
+            elapsed_ms: 0,
+            market: crate::strategy::types::StrategyMarketSnapshot {
+                mark_price: 0.0,
+                mid_price: 0.0,
+                funding_rate: 0.0,
+            },
+            planned_action: crate::strategy::types::StrategyPlannedAction {
+                action: "noop".to_string(),
+                order_type: "noop".to_string(),
+                slice_notional_usdc: None,
+                slice_tokens: None,
+                executable_notional_usdc: None,
+                executable_tokens: None,
+                executable_base_lots: None,
+                rounding_note: None,
+            },
+            execution: crate::strategy::types::StrategyExecution::default(),
+            progress: crate::strategy::types::StrategyProgress::default(),
+            position: crate::strategy::types::StrategyPositionSnapshot {
+                side: side.map(|s| s.to_string()),
+                size_tokens,
+                ..Default::default()
+            },
+            account_health: crate::strategy::types::StrategyAccountHealth::default(),
+            next_tick: crate::strategy::types::StrategyNextTick {
+                next_tick_at: None,
+                delay_seconds: None,
+                stop_reason: None,
+            },
+        }
+    }
+
+    #[test]
+    fn stale_position_warning_fires_on_terminal_with_open_position() {
+        let tick = tick_with_position(22, Some("short"), 0.38);
+        let (stale, warning) = stale_position_warning(Some(&tick), true);
+        assert!(stale);
+        let warning = warning.expect("warning populated");
+        assert!(warning.contains("vulcan_position_list"));
+        assert!(warning.contains("tick 22"));
+    }
+
+    #[test]
+    fn stale_position_warning_silent_when_flat() {
+        let tick = tick_with_position(22, None, 0.0);
+        let (stale, warning) = stale_position_warning(Some(&tick), true);
+        assert!(!stale);
+        assert!(warning.is_none());
+    }
+
+    #[test]
+    fn stale_position_warning_silent_when_running() {
+        let tick = tick_with_position(22, Some("short"), 0.38);
+        let (stale, warning) = stale_position_warning(Some(&tick), false);
+        assert!(!stale);
+        assert!(warning.is_none());
     }
 }

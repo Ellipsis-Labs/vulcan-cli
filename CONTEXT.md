@@ -101,9 +101,33 @@ This contract applies to CLI, MCP, paper trading, dry runs, one-off trades, orde
 - Report every submitted trade, placed order, cancellation, TP/SL change, position close/reduce, margin transaction, strategy slice, paper fill, dry-run action, and transaction signature as soon as the agent observes it.
 - Do not replace per-execution updates with mid-run or final summaries. Final reports summarize the event log; they do not substitute for live execution logging.
 - For CLI table output, relay execution rows as they print. For CLI JSON output, relay execution diagnostics from `stderr` during the run and parse `stdout` for the final JSON result.
-- For MCP strategies, start multi-tick or run-until-stopped runs with `detached: true`, store `last_tick_seen=0`, backfill with `vulcan_strategy_status` using `since_tick=0`, use `vulcan_strategy_monitor` for compact checkpoints, and use `vulcan_strategy_wait_next_tick(after_tick=last_tick_seen)` only when actively waiting for the next expected tick.
+- For multi-tick MCP strategy runs, follow [Strategy Monitoring](#strategy-monitoring-detached-runs) below.
 - If a tool returns multiple order IDs, fills, or signatures, enumerate each one. If an expected fill or signature is missing, say so and keep polling or reconcile before claiming execution is complete.
 - Only suppress live per-execution updates when the user explicitly asked for final-only output before launch.
+
+## Strategy Monitoring (Detached Runs)
+
+This contract applies to every `vulcan_strategy_twap_start`, `vulcan_strategy_grid_start`, and `vulcan_strategy_ta_start` invocation over MCP. Per-strategy descriptions and skills add only the strategy-specific tick narration; they do not restate this contract.
+
+**Launch — `detached: true` is required for any multi-tick or `run_until_stopped` run.** The `_start` call returns a `run_id` immediately. The agent then:
+
+1. Stores `last_tick_seen = 0`.
+2. Backfills startup ticks with `vulcan_strategy_status` using `since_tick=0`.
+3. **Emits a one-line launch announcement** before any wait call so the user has a visible receipt that the monitoring loop is active. Required fields: `Monitoring <strategy> run <run_id> on <symbol> (mode=<mode>, interval=<n>s). Next tick expected at <ISO timestamp> (~<n>s). I will report each tick as it lands and stop only on terminal status, stale lifecycle, or your instruction.` All values come from the `status since_tick=0` response — do not guess.
+4. Uses `vulcan_strategy_monitor` for compact non-blocking checkpoints.
+5. Uses `vulcan_strategy_wait_next_tick(after_tick=last_tick_seen)` only when actively waiting for the next expected tick. Never `sleep` in the shell as a substitute.
+
+**Monitoring is automatic.** Once the run is launched, the agent enters the wait-next-tick loop and continues until exactly one of these terminal conditions:
+
+- The run's status is terminal (`completed`, `paused`, `stopped`, `failed`, `finalized`).
+- `vulcan_strategy_monitor` reports `lifecycle.stale=true` — at which point the agent stops claiming the strategy is maintained and tells the user to resume/reconcile.
+- The user explicitly asks to stop monitoring.
+
+**Do not ask the user whether to begin, continue, or pause monitoring after launch.** The loop is part of the strategy execution contract, not an opt-in.
+
+**Reporting cadence.** Relay every observed tick as a compact row with full transaction signatures (never abbreviated). Do not batch ticks into mid-run or end-only summaries. Live `confirm_each`, `auto_execute`, and `resume` are dangerous and require `acknowledged: true`.
+
+**Wait-timeout heartbeat.** `wait_next_tick` has a default 90 s server-side timeout. When it returns with `timed_out=true` and the run is not yet terminal, the agent must emit a one-line heartbeat before re-entering the wait — for example: `No new tick yet for <run_id>; runner lifecycle <healthy|stale>, last tick <N> at <ts>, waiting again.` Silent re-entry makes the agent indistinguishable from a hang on slow intervals. If `lifecycle.stale=true`, do not re-enter — surface the stale state and the resume/reconcile instruction instead.
 
 ## First-Run Agent Flow
 
