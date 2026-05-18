@@ -11,6 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::agent_install_state::AgentInstallState;
 use crate::context::AppContext;
 use crate::error::VulcanError;
 use crate::output::{render_success, TableRenderable};
@@ -181,7 +182,9 @@ pub async fn execute_check_inner(
         };
 
     let update_available = semver_gt(&latest_version, CURRENT_VERSION);
-    let update_command = render_update_command(&update_method, &install_path);
+    let agent_install = AgentInstallState::load(&ctx.vulcan_dir);
+    let update_command =
+        render_update_command(&update_method, &install_path, agent_install.as_ref());
     let restart_hint = update_available.then(|| RESTART_HINT.to_string());
 
     Ok(UpdateCheckResult {
@@ -207,7 +210,9 @@ pub async fn execute_check_for_health(ctx: &AppContext) -> UpdateCheckResult {
         Err(err) => {
             let install_path = resolve_install_path();
             let update_method = classify_install(&install_path);
-            let update_command = render_update_command(&update_method, &install_path);
+            let agent_install = AgentInstallState::load(&ctx.vulcan_dir);
+            let update_command =
+                render_update_command(&update_method, &install_path, agent_install.as_ref());
             UpdateCheckResult {
                 current_version: CURRENT_VERSION.to_string(),
                 latest_version: "unknown".to_string(),
@@ -339,10 +344,15 @@ fn is_dir_user_writable(dir: &Path) -> bool {
     }
 }
 
-fn render_update_command(method: &UpdateMethod, install_path: &Path) -> String {
+fn render_update_command(
+    method: &UpdateMethod,
+    install_path: &Path,
+    agent_install: Option<&AgentInstallState>,
+) -> String {
+    let skill_flags = render_skill_flags(agent_install);
     match method {
         UpdateMethod::InstallScriptDefault => {
-            format!("Run: curl -fsSL {INSTALL_SH_URL} | sh -s -- --no-agent-skills")
+            format!("Run: curl -fsSL {INSTALL_SH_URL} | sh -s -- {skill_flags}")
         }
         UpdateMethod::InstallScriptCustomDir => {
             let parent = install_path
@@ -350,7 +360,7 @@ fn render_update_command(method: &UpdateMethod, install_path: &Path) -> String {
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|| "$HOME/.local/bin".to_string());
             format!(
-                "Run: curl -fsSL {INSTALL_SH_URL} | VULCAN_INSTALL_DIR={parent} sh -s -- --no-agent-skills"
+                "Run: curl -fsSL {INSTALL_SH_URL} | VULCAN_INSTALL_DIR={parent} sh -s -- {skill_flags}"
             )
         }
         UpdateMethod::PackageManager => format!(
@@ -358,6 +368,33 @@ fn render_update_command(method: &UpdateMethod, install_path: &Path) -> String {
             install_path.display()
         ),
     }
+}
+
+fn render_skill_flags(agent_install: Option<&AgentInstallState>) -> String {
+    let base = "--with-agent-skills --force-agent-skills";
+    match agent_install {
+        Some(state) => format!(
+            "{base} --agent-target {} --agent-scope {}",
+            shell_quote(&state.target),
+            shell_quote(&state.scope),
+        ),
+        None => base.to_string(),
+    }
+}
+
+/// Defensive single-quote for an untrusted-looking shell arg. Persisted target/scope
+/// values come from clap ValueEnums so in practice they're already safe, but the file
+/// is user-writable, so we treat them as opaque strings.
+fn shell_quote(value: &str) -> String {
+    if value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | ':'))
+        && !value.is_empty()
+    {
+        return value.to_string();
+    }
+    let escaped = value.replace('\'', "'\\''");
+    format!("'{escaped}'")
 }
 
 fn now_unix() -> u64 {
@@ -418,11 +455,14 @@ mod tests {
         let cmd = render_update_command(
             &UpdateMethod::InstallScriptDefault,
             Path::new("/home/x/.local/bin/vulcan"),
+            None,
         );
         assert!(cmd.contains("curl"));
         assert!(cmd.contains("install.sh"));
         assert!(!cmd.contains("VULCAN_INSTALL_DIR"));
-        assert!(cmd.contains("--no-agent-skills"));
+        assert!(cmd.contains("--with-agent-skills"));
+        assert!(cmd.contains("--force-agent-skills"));
+        assert!(!cmd.contains("--agent-target"));
     }
 
     #[test]
@@ -430,9 +470,11 @@ mod tests {
         let cmd = render_update_command(
             &UpdateMethod::InstallScriptCustomDir,
             Path::new("/home/x/opt/vulcan"),
+            None,
         );
         assert!(cmd.contains("VULCAN_INSTALL_DIR=/home/x/opt"));
-        assert!(cmd.contains("--no-agent-skills"));
+        assert!(cmd.contains("--with-agent-skills"));
+        assert!(cmd.contains("--force-agent-skills"));
     }
 
     #[test]
@@ -440,9 +482,39 @@ mod tests {
         let cmd = render_update_command(
             &UpdateMethod::PackageManager,
             Path::new("/opt/homebrew/bin/vulcan"),
+            None,
         );
         assert!(cmd.contains("package manager"));
         assert!(cmd.contains("/opt/homebrew/bin/vulcan"));
         assert!(!cmd.contains("curl"));
+    }
+
+    #[test]
+    fn render_command_threads_persisted_target_and_scope() {
+        let state = AgentInstallState {
+            target: "cursor".to_string(),
+            scope: "project".to_string(),
+            installed_at_unix: 1_700_000_000,
+        };
+        let cmd = render_update_command(
+            &UpdateMethod::InstallScriptDefault,
+            Path::new("/home/x/.local/bin/vulcan"),
+            Some(&state),
+        );
+        assert!(cmd.contains("--agent-target cursor"));
+        assert!(cmd.contains("--agent-scope project"));
+    }
+
+    #[test]
+    fn shell_quote_passes_safe_identifiers_through() {
+        assert_eq!(shell_quote("claude"), "claude");
+        assert_eq!(shell_quote("agent-skills_v2"), "agent-skills_v2");
+    }
+
+    #[test]
+    fn shell_quote_escapes_anything_unusual() {
+        assert_eq!(shell_quote("with space"), "'with space'");
+        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+        assert_eq!(shell_quote(""), "''");
     }
 }

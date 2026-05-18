@@ -8,6 +8,7 @@ VERSION="${VULCAN_VERSION:-$DEFAULT_VERSION}"
 INSTALL_AGENT_SKILLS="${VULCAN_INSTALL_AGENT_SKILLS:-prompt}"
 AGENT_TARGET="${VULCAN_AGENT_TARGET:-claude}"
 AGENT_SCOPE="${VULCAN_AGENT_SCOPE:-user}"
+FORCE_AGENT_SKILLS="${VULCAN_FORCE_AGENT_SKILLS:-no}"
 
 usage() {
   cat <<EOF
@@ -15,7 +16,7 @@ Install vulcan from GitHub Releases.
 
 Usage:
   install.sh [--version <version>] [--install-dir <dir>] [--with-agent-skills|--no-agent-skills]
-             [--agent-target <target>] [--agent-scope <scope>]
+             [--agent-target <target>] [--agent-scope <scope>] [--force-agent-skills]
 
 Environment:
   VULCAN_VERSION                Version to install, with or without a leading v
@@ -23,6 +24,7 @@ Environment:
   VULCAN_INSTALL_AGENT_SKILLS   yes, no, or prompt (default: prompt)
   VULCAN_AGENT_TARGET           claude, cursor, codex, or agentskills (default: claude)
   VULCAN_AGENT_SCOPE            user or project (default: user)
+  VULCAN_FORCE_AGENT_SKILLS     yes or no — overwrite locally modified skill files (default: no)
 EOF
 }
 
@@ -67,6 +69,10 @@ while [ "$#" -gt 0 ]; do
       fi
       AGENT_SCOPE="$2"
       shift 2
+      ;;
+    --force-agent-skills)
+      FORCE_AGENT_SKILLS="yes"
+      shift
       ;;
     -h|--help)
       usage
@@ -244,7 +250,14 @@ if should_install_agent_skills; then
       exit 1
       ;;
   esac
-  "$INSTALL_DIR/vulcan" agent install --target "$AGENT_TARGET" --scope "$AGENT_SCOPE"
+  case "$FORCE_AGENT_SKILLS" in
+    yes|true|1)
+      "$INSTALL_DIR/vulcan" agent install --target "$AGENT_TARGET" --scope "$AGENT_SCOPE" --force
+      ;;
+    *)
+      "$INSTALL_DIR/vulcan" agent install --target "$AGENT_TARGET" --scope "$AGENT_SCOPE"
+      ;;
+  esac
 else
   echo "Skipped agent skill installation. Run 'vulcan agent install --target cursor --scope user' later."
 fi

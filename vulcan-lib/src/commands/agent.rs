@@ -1,5 +1,6 @@
 //! Agent integration commands — install and inspect bundled Agent Skills.
 
+use crate::agent_install_state::AgentInstallState;
 use crate::agent_log::{
     build_position_session_report, default_log_path, read_recent, summarize_records,
     AgentLogRecord, AgentPositionSessionReport, AgentSessionSummary,
@@ -740,6 +741,10 @@ pub async fn execute(ctx: &AppContext, cmd: AgentCommand) -> Result<(), VulcanEr
             force,
         } => {
             let result = install_skills(target, scope, dir, force, ctx.dry_run)?;
+            if !ctx.dry_run {
+                let _ = AgentInstallState::new(target_label(target), scope_label(scope))
+                    .save(&ctx.vulcan_dir);
+            }
             render_success(ctx.output_format, &result, serde_json::Value::Null);
         }
         AgentCommand::Doctor { target, scope, dir } => {
