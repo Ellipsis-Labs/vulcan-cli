@@ -754,11 +754,7 @@ fn optional_part(value: Option<&&str>) -> Result<Option<f64>, VulcanError> {
 // Snap a derived price (from center_on_mark/width_pct generation) to the
 // market's tick. Strict validation is reserved for user-supplied prices where
 // silent snapping would mask typos; see validate_tick_price.
-async fn snap_tick_price(
-    ctx: &AppContext,
-    symbol: &str,
-    price: f64,
-) -> Result<f64, VulcanError> {
+async fn snap_tick_price(ctx: &AppContext, symbol: &str, price: f64) -> Result<f64, VulcanError> {
     let metadata = ctx.metadata().await?;
     let calc = metadata.get_market_calculator(symbol).ok_or_else(|| {
         VulcanError::validation("UNKNOWN_MARKET", format!("Unknown market: {}", symbol))
