@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "cli_version": "0.5.7",
+  "cli_version": "0.5.8",
   "description": "Machine-readable command catalog for vulcan. 58 tools across 13 groups.",
   "groups": {
     "market": "Market data: prices, orderbooks, candles, funding rates",
