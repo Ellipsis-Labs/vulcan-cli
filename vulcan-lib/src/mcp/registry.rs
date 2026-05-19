@@ -886,7 +886,7 @@ pub static TOOLS: &[ToolDef] = &[
             "type": "object",
             "properties": {
                 "run_id": { "type": "string" },
-                "after_tick": { "type": "integer", "description": "Return once a tick newer than this index exists. Defaults to current latest tick at call time." },
+                "after_tick": { "type": "integer", "description": "Return once a tick newer than this index exists. Omit on the first poll after a detached start to receive every tick already emitted (including ticks that landed before the call). For subsequent polls, pass the last tick index you have already narrated." },
                 "timeout_seconds": { "type": "integer", "description": "Maximum seconds to wait before returning current status with timed_out=true", "default": 90 },
                 "include_ledger": { "type": "boolean", "description": "Include the full persisted ledger; defaults to false to reduce context", "default": false }
             },

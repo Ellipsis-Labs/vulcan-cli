@@ -372,7 +372,14 @@ pub async fn finalize(
     };
 
     let wait_status = if wait {
-        Some(wait_next_tick(ctx, run_id, None, timeout_seconds, false).await?)
+        // Anchor at the tick already on disk so the wait blocks until the
+        // runner emits a NEW tick or reaches terminal — not on pre-existing
+        // ticks. wait_next_tick's default-None now returns all known ticks.
+        let anchor = read_run_ticks(&default_strategy_runs_dir(&ctx.vulcan_dir), run_id)
+            .unwrap_or_default()
+            .last()
+            .map(|tick| tick.tick);
+        Some(wait_next_tick(ctx, run_id, anchor, timeout_seconds, false).await?)
     } else {
         None
     };
@@ -485,14 +492,10 @@ pub async fn wait_next_tick(
     timeout_seconds: u64,
     include_ledger: bool,
 ) -> Result<StrategyStatusResult, VulcanError> {
-    let observed_tick = match after_tick {
-        Some(tick) => tick,
-        None => read_run_ticks(&default_strategy_runs_dir(&ctx.vulcan_dir), run_id)
-            .unwrap_or_default()
-            .last()
-            .map(|tick| tick.tick)
-            .unwrap_or(0),
-    };
+    // Default to 0 so a fresh poll returns every tick already on disk, including
+    // tick 1 if the detached runner raced ahead of the agent's first call.
+    // Callers that want "from-now" semantics must pass after_tick explicitly.
+    let observed_tick = after_tick.unwrap_or(0);
     let deadline = std::time::Instant::now()
         .checked_add(std::time::Duration::from_secs(timeout_seconds))
         .unwrap_or_else(std::time::Instant::now);

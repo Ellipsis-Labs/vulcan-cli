@@ -805,7 +805,7 @@
       "dangerous": false,
       "parameters": [
         { "name": "run_id", "type": "string", "required": true, "description": "Strategy run ID" },
-        { "name": "after_tick", "type": "integer", "required": false, "description": "Return once a tick newer than this index exists. Defaults to current latest tick at call time." },
+        { "name": "after_tick", "type": "integer", "required": false, "description": "Return once a tick newer than this index exists. Omit on the first poll after a detached start to receive every tick already emitted (including ticks that landed before the call). For subsequent polls, pass the last tick index you have already narrated." },
         { "name": "timeout_seconds", "type": "integer", "required": false, "default": 90, "description": "Maximum seconds to wait before returning current status with timed_out=true" },
         { "name": "include_ledger", "type": "boolean", "required": false, "default": false, "description": "Include the full persisted ledger; defaults to false to reduce context" }
       ],
