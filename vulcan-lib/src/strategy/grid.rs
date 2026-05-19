@@ -603,9 +603,13 @@ async fn build_levels(
             "current mark price must leave enough grid levels on both sides",
         ));
     }
+    let metadata = ctx.metadata().await?;
+    let calc = metadata.get_market_calculator(symbol).ok_or_else(|| {
+        VulcanError::validation("UNKNOWN_MARKET", format!("Unknown market: {}", symbol))
+    })?;
     let mut levels = Vec::new();
     for (idx, price) in bids.into_iter().enumerate() {
-        let price = snap_tick_price(ctx, symbol, price).await?;
+        let price = snap_price_with_calc(calc, price)?;
         levels.push(generated_level(
             idx,
             StrategySide::Buy,
@@ -614,10 +618,11 @@ async fn build_levels(
             tokens,
             args.take_profit_spacing,
             args.stop_loss_spacing,
+            calc,
         )?);
     }
     for (idx, price) in asks.into_iter().enumerate() {
-        let price = snap_tick_price(ctx, symbol, price).await?;
+        let price = snap_price_with_calc(calc, price)?;
         levels.push(generated_level(
             idx,
             StrategySide::Sell,
@@ -626,6 +631,7 @@ async fn build_levels(
             tokens,
             args.take_profit_spacing,
             args.stop_loss_spacing,
+            calc,
         )?);
     }
     Ok(levels)
@@ -657,6 +663,7 @@ fn size_lots_per_level(args: &GridStartArgs, base_lot_scale: f64) -> Result<u64,
     Ok(lots)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn generated_level(
     idx: usize,
     side: StrategySide,
@@ -665,7 +672,12 @@ fn generated_level(
     tokens: f64,
     tp_spacing: Option<f64>,
     sl_spacing: Option<f64>,
+    calc: &phoenix_rise::math::MarketCalculator,
 ) -> Result<GridLevel, VulcanError> {
+    // TP/SL are derived from `price ± spacing` where spacing is in dollars, so
+    // the result isn't guaranteed to be tick-aligned even when `price` is.
+    // Snap defensively so Phoenix accepts the bracket leg and so any local
+    // display matches the on-chain resting price.
     let take_profit_price = match (side, tp_spacing) {
         (_, Some(spacing)) if spacing <= 0.0 => {
             return Err(VulcanError::validation(
@@ -673,8 +685,8 @@ fn generated_level(
                 "take-profit spacing must be positive",
             ));
         }
-        (StrategySide::Buy, Some(spacing)) => Some(price + spacing),
-        (StrategySide::Sell, Some(spacing)) => Some(price - spacing),
+        (StrategySide::Buy, Some(spacing)) => Some(snap_price_with_calc(calc, price + spacing)?),
+        (StrategySide::Sell, Some(spacing)) => Some(snap_price_with_calc(calc, price - spacing)?),
         _ => None,
     };
     let stop_loss_price = match (side, sl_spacing) {
@@ -684,8 +696,8 @@ fn generated_level(
                 "stop-loss spacing must be positive",
             ));
         }
-        (StrategySide::Buy, Some(spacing)) => Some(price - spacing),
-        (StrategySide::Sell, Some(spacing)) => Some(price + spacing),
+        (StrategySide::Buy, Some(spacing)) => Some(snap_price_with_calc(calc, price - spacing)?),
+        (StrategySide::Sell, Some(spacing)) => Some(snap_price_with_calc(calc, price + spacing)?),
         _ => None,
     };
     validate_tpsl(side, price, take_profit_price, stop_loss_price)?;
@@ -754,17 +766,10 @@ fn optional_part(value: Option<&&str>) -> Result<Option<f64>, VulcanError> {
     }
 }
 
-// Snap a derived price (from center_on_mark/width_pct generation) to the
-// market's tick. Strict validation is reserved for user-supplied prices where
-// silent snapping would mask typos; see validate_tick_price.
-async fn snap_tick_price(ctx: &AppContext, symbol: &str, price: f64) -> Result<f64, VulcanError> {
-    let metadata = ctx.metadata().await?;
-    let calc = metadata.get_market_calculator(symbol).ok_or_else(|| {
-        VulcanError::validation("UNKNOWN_MARKET", format!("Unknown market: {}", symbol))
-    })?;
-    snap_price_with_calc(calc, price)
-}
-
+// Snap a derived price (from center_on_mark/width_pct generation, replacement
+// spacing, or TP/SL spacing) to the market's tick. Strict validation is reserved
+// for user-supplied prices where silent snapping would mask typos; see
+// validate_tick_price.
 fn snap_price_with_calc(
     calc: &phoenix_rise::math::MarketCalculator,
     price: f64,
@@ -1081,13 +1086,22 @@ async fn maintain_grid(
                 // never rested) stay in `missing_levels` but keep their
                 // pre-reconcile status — replacing them would stack a fresh
                 // order at the flipped price every tick.
+                let metadata = ctx.metadata().await?;
+                let calc = metadata
+                    .get_market_calculator(&config.symbol)
+                    .ok_or_else(|| {
+                        VulcanError::validation(
+                            "UNKNOWN_MARKET",
+                            format!("Unknown market: {}", &config.symbol),
+                        )
+                    })?;
                 let replacements = observation
                     .missing_levels
                     .iter()
                     .filter(|level| {
                         level_status(ledger, &level.id) == Some(StrategySliceStatus::Filled)
                     })
-                    .filter_map(|level| replacement_level(config, level))
+                    .filter_map(|level| replacement_level(config, level, calc))
                     .collect::<Vec<_>>();
                 if !replacements.is_empty() {
                     just_placed = replacements.iter().map(|level| level.id.clone()).collect();
@@ -1122,6 +1136,15 @@ async fn maintain_paper_grid(
     ledger: &mut StrategyRunLedger,
 ) -> Result<GridTickOutcome, VulcanError> {
     let result = paper::reconcile(ctx, Some(&config.symbol)).await?;
+    let metadata = ctx.metadata().await?;
+    let calc = metadata
+        .get_market_calculator(&config.symbol)
+        .ok_or_else(|| {
+            VulcanError::validation(
+                "UNKNOWN_MARKET",
+                format!("Unknown market: {}", &config.symbol),
+            )
+        })?;
     let mut replacements = Vec::new();
     let level_by_order = paper_order_level_map(ledger);
     for fill in &result.fills {
@@ -1141,7 +1164,7 @@ async fn maintain_paper_grid(
                         note: Some("paper grid level filled during reconciliation".to_string()),
                     },
                 );
-                if let Some(replacement) = replacement_level(config, level) {
+                if let Some(replacement) = replacement_level(config, level, calc) {
                     replacements.push(replacement);
                 }
             }
@@ -1216,12 +1239,21 @@ async fn maintain_paper_grid(
     })
 }
 
-fn replacement_level(config: &GridRunConfig, level: &GridLevel) -> Option<GridLevel> {
+fn replacement_level(
+    config: &GridRunConfig,
+    level: &GridLevel,
+    calc: &phoenix_rise::math::MarketCalculator,
+) -> Option<GridLevel> {
     let spacing = (config.upper_price - config.lower_price) / (config.levels_per_side * 2) as f64;
-    let (side, price) = match level.entry_side {
+    let (side, raw_price) = match level.entry_side {
         StrategySide::Buy => (StrategySide::Sell, level.entry_price + spacing),
         StrategySide::Sell => (StrategySide::Buy, level.entry_price - spacing),
     };
+    // Snap to Phoenix tick so the price we store matches the price that will rest
+    // on the orderbook exactly. Without this, `live_order_matches_level`'s strict
+    // (< 1e-6) price comparison fails and the order_id never gets harvested,
+    // stranding the level in a "missing forever" retry loop.
+    let price = snap_price_with_calc(calc, raw_price).ok()?;
     if price < config.lower_price || price > config.upper_price {
         return None;
     }
@@ -1235,14 +1267,24 @@ fn replacement_level(config: &GridRunConfig, level: &GridLevel) -> Option<GridLe
     replacement.entry_side = side;
     replacement.entry_price = price;
     replacement.source_level_id = Some(level.id.clone());
+    // Snap derived TP/SL to tick (spacing is in dollars, so `price ± spacing`
+    // may not land on a tick even when `price` does).
     replacement.take_profit_price = match (side, config.take_profit_spacing) {
-        (StrategySide::Buy, Some(spacing)) => Some(price + spacing),
-        (StrategySide::Sell, Some(spacing)) => Some(price - spacing),
+        (StrategySide::Buy, Some(spacing)) => {
+            Some(snap_price_with_calc(calc, price + spacing).ok()?)
+        }
+        (StrategySide::Sell, Some(spacing)) => {
+            Some(snap_price_with_calc(calc, price - spacing).ok()?)
+        }
         _ => None,
     };
     replacement.stop_loss_price = match (side, config.stop_loss_spacing) {
-        (StrategySide::Buy, Some(spacing)) => Some(price - spacing),
-        (StrategySide::Sell, Some(spacing)) => Some(price + spacing),
+        (StrategySide::Buy, Some(spacing)) => {
+            Some(snap_price_with_calc(calc, price - spacing).ok()?)
+        }
+        (StrategySide::Sell, Some(spacing)) => {
+            Some(snap_price_with_calc(calc, price + spacing).ok()?)
+        }
         _ => None,
     };
     validate_tpsl(
@@ -2861,11 +2903,68 @@ mod tests {
             margin_feasibility: None,
             safety_policy: StrategySafetyPolicy::default(),
         };
-        let replacement = replacement_level(&config, &level).unwrap();
+        use phoenix_rise::math::{MarketCalculator, QuoteLotsPerBaseLotPerTick, WrapperNum};
+        let calc = MarketCalculator::new(2, QuoteLotsPerBaseLotPerTick::new(100));
+        let replacement = replacement_level(&config, &level, &calc).unwrap();
         assert_eq!(replacement.entry_side, StrategySide::Sell);
         assert_eq!(replacement.take_profit_price, Some(100.0));
         assert_eq!(replacement.stop_loss_price, Some(104.0));
         assert_eq!(replacement.source_level_id, Some("buy-1".to_string()));
+    }
+
+    #[test]
+    fn replacement_snaps_to_tick() {
+        use phoenix_rise::math::{MarketCalculator, QuoteLotsPerBaseLotPerTick, WrapperNum};
+        // 1 tick = $0.01 (ZEC-like market).
+        let calc = MarketCalculator::new(2, QuoteLotsPerBaseLotPerTick::new(100));
+        // Reproduces the ZEC failure mode: a sell at 570.71 fills, and the raw
+        // replacement price (570.71 - (581.77 - 559.65) / 6 = 567.0233...) has
+        // sub-tick residue. Without snapping, the level's stored entry_price
+        // would never match the tick-aligned price resting on Phoenix.
+        let level = GridLevel {
+            id: "sell-1".to_string(),
+            entry_side: StrategySide::Sell,
+            entry_price: 570.71,
+            size_lots: 1,
+            tokens: 0.01,
+            take_profit_price: None,
+            stop_loss_price: None,
+            source_level_id: None,
+        };
+        let config = GridRunConfig {
+            run_id: "grid-test".to_string(),
+            run_label: None,
+            wallet: None,
+            symbol: "ZEC".to_string(),
+            mode: StrategyMode::AutoExecute,
+            margin_mode: StrategyMarginMode::Cross,
+            isolated_collateral: None,
+            lower_price: 559.65,
+            upper_price: 581.77,
+            levels_per_side: 3,
+            tokens_per_level: None,
+            size_lots_per_level: Some(1),
+            price_drift_guard_bps: None,
+            take_profit_spacing: None,
+            stop_loss_spacing: None,
+            interval_seconds: 60,
+            ticks: 1,
+            run_until_stopped: false,
+            stale_after_seconds: None,
+            slide: true,
+            levels: vec![level.clone()],
+            margin_feasibility: None,
+            safety_policy: StrategySafetyPolicy::default(),
+        };
+        let replacement = replacement_level(&config, &level, &calc).unwrap();
+        // raw price = 570.71 - (581.77 - 559.65) / 6 = 570.71 - 3.6866... = 567.0233...,
+        // which must snap to a $0.01 tick.
+        let snapped_cents = (replacement.entry_price * 100.0).round() as i64;
+        assert_eq!(snapped_cents as f64 / 100.0, replacement.entry_price);
+        // Sanity: still inside grid bounds and on the correct side.
+        assert_eq!(replacement.entry_side, StrategySide::Buy);
+        assert!(replacement.entry_price >= config.lower_price);
+        assert!(replacement.entry_price <= config.upper_price);
     }
 
     #[test]
