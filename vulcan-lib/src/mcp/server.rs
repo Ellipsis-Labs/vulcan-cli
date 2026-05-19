@@ -893,6 +893,16 @@ static RESOURCES: &[(&str, &str, &str)] = &[
         include_str!("../../../skills/vulcan/SKILL.md"),
     ),
     (
+        "vulcan://skills/vulcan-quickstart",
+        "Five-minute install and first paper trade",
+        include_str!("../../../skills/vulcan-quickstart/SKILL.md"),
+    ),
+    (
+        "vulcan://skills/vulcan-execution-modes",
+        "Canonical Observe / Paper / Dry-Run / Confirm-Each / Auto-Execute mode taxonomy",
+        include_str!("../../../skills/vulcan-execution-modes/SKILL.md"),
+    ),
+    (
         "vulcan://skills/vulcan-risk-management",
         "Pre-trade risk checks, leverage tiers, margin health, when to warn",
         include_str!("../../../skills/vulcan-risk-management/SKILL.md"),
@@ -923,6 +933,11 @@ static RESOURCES: &[(&str, &str, &str)] = &[
         include_str!("../../../skills/vulcan-market-intel/SKILL.md"),
     ),
     (
+        "vulcan://skills/vulcan-technical-analysis",
+        "Technical indicators (SMA, EMA, RSI, MACD, BBands, ATR, VWAP, ADX, Stoch) over Phoenix candles",
+        include_str!("../../../skills/vulcan-technical-analysis/SKILL.md"),
+    ),
+    (
         "vulcan://skills/vulcan-portfolio-intel",
         "Portfolio snapshot: margin status, positions, orders, funding rates",
         include_str!("../../../skills/vulcan-portfolio-intel/SKILL.md"),
@@ -951,6 +966,11 @@ static RESOURCES: &[(&str, &str, &str)] = &[
         "vulcan://skills/vulcan-grid-trading",
         "Grid trading with layered limit orders across a price range",
         include_str!("../../../skills/vulcan-grid-trading/SKILL.md"),
+    ),
+    (
+        "vulcan://skills/vulcan-ta-strategy",
+        "TA-driven strategy runner — declarative Condition → Action rules over indicators and price",
+        include_str!("../../../skills/vulcan-ta-strategy/SKILL.md"),
     ),
 ];
 
@@ -988,7 +1008,7 @@ impl ServerHandler for VulcanMcpServer {
              Read vulcan://agent/health for first-run setup, Phoenix API/Solana RPC, paper, wallet, deposited collateral, and skill checks. \
              Read vulcan://agent/session-summary for recent redacted agent actions. \
              Read vulcan://agent/position-report for a live trader/session performance report. \
-             Read vulcan://skills/index for goal-oriented workflow skills.",
+             Before your first answer in a session, any strategy launch, or any dangerous tool call, read vulcan://skills/index and load the focused skill it routes you to.",
         )
     }
 
@@ -1643,6 +1663,9 @@ fn arg_tpsl_levels(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
     #[test]
     fn tool_catalog_cli_version_matches_crate() {
         let catalog: serde_json::Value =
@@ -1656,6 +1679,83 @@ mod tests {
             catalog_version,
             env!("CARGO_PKG_VERSION"),
             "agents/tool-catalog.json `cli_version` is out of sync with vulcan-lib Cargo.toml — bump it on every release"
+        );
+    }
+
+    fn skills_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("skills")
+    }
+
+    fn registered_skill_names() -> HashSet<&'static str> {
+        super::RESOURCES
+            .iter()
+            .filter_map(|(uri, _, _)| uri.strip_prefix("vulcan://skills/"))
+            .filter(|name| *name != "index")
+            .collect()
+    }
+
+    #[test]
+    fn every_skill_on_disk_is_registered_as_mcp_resource() {
+        let mut on_disk: Vec<String> = std::fs::read_dir(skills_dir())
+            .expect("skills/ directory must exist")
+            .filter_map(|entry| {
+                let path = entry.ok()?.path();
+                if path.is_dir() && path.join("SKILL.md").is_file() {
+                    path.file_name()?.to_str().map(String::from)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        on_disk.sort();
+
+        let registered = registered_skill_names();
+        let missing: Vec<&String> = on_disk
+            .iter()
+            .filter(|name| !registered.contains(name.as_str()))
+            .collect();
+
+        assert!(
+            missing.is_empty(),
+            "Skills exist on disk but are not registered as MCP resources in vulcan-lib/src/mcp/server.rs RESOURCES: {missing:?}.\n\
+             Agents following skills/INDEX.md will hit `MCP error -32002: Unknown resource` for these URIs."
+        );
+    }
+
+    #[test]
+    fn skills_index_only_references_registered_skills() {
+        let index = include_str!("../../../skills/INDEX.md");
+        let registered = registered_skill_names();
+
+        // Parse markdown link targets of the form `(./<skill-name>/SKILL.md)`.
+        let mut referenced: HashSet<&str> = HashSet::new();
+        for line in index.lines() {
+            let mut rest = line;
+            while let Some(start) = rest.find("(./") {
+                let after = &rest[start + 3..];
+                if let Some(end) = after.find("/SKILL.md)") {
+                    let name = &after[..end];
+                    if !name.is_empty() && !name.contains('/') {
+                        referenced.insert(name);
+                    }
+                    rest = &after[end + "/SKILL.md)".len()..];
+                } else {
+                    break;
+                }
+            }
+        }
+
+        let unbound: Vec<&&str> = referenced
+            .iter()
+            .filter(|name| !registered.contains(*name))
+            .collect();
+
+        assert!(
+            unbound.is_empty(),
+            "skills/INDEX.md links to skill paths that are not registered as MCP resources: {unbound:?}.\n\
+             Either register them in vulcan-lib/src/mcp/server.rs RESOURCES or remove them from the index."
         );
     }
 }
