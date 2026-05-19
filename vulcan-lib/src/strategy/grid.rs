@@ -107,6 +107,10 @@ pub async fn run_grid_detached(
     let (config, no_sleep) = build_grid_config(ctx.as_ref(), args).await?;
     let run_id = config.run_id.clone();
     let task_run_id = run_id.clone();
+    crate::strategy::watchdog::spawn_watchdog(
+        crate::strategy::log::default_strategy_runs_dir(&ctx.vulcan_dir),
+        run_id.clone(),
+    );
     tokio::spawn(async move {
         if let Err(err) =
             run_grid_config(ctx.as_ref(), config, no_sleep, None, None, Vec::new()).await
@@ -458,6 +462,7 @@ async fn run_grid_config(
             execution: outcome.execution,
             progress: progress.clone(),
             position,
+            position_after_action: None,
             account_health,
             next_tick: StrategyNextTick {
                 next_tick_at: if final_tick {

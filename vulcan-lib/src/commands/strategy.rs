@@ -1822,6 +1822,7 @@ mod tests {
                 size_tokens,
                 ..Default::default()
             },
+            position_after_action: None,
             account_health: crate::strategy::types::StrategyAccountHealth::default(),
             next_tick: crate::strategy::types::StrategyNextTick {
                 next_tick_at: None,

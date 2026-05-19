@@ -127,6 +127,10 @@ pub async fn run_ta_detached(
     let (config, no_sleep) = build_ta_config(ctx.as_ref(), input).await?;
     let run_id = config.run_id.clone();
     let task_run_id = run_id.clone();
+    crate::strategy::watchdog::spawn_watchdog(
+        default_strategy_runs_dir(&ctx.vulcan_dir),
+        run_id.clone(),
+    );
     tokio::spawn(async move {
         if let Err(err) = run_ta_config(ctx.as_ref(), config, no_sleep, None, Vec::new()).await {
             eprintln!("[strategy:{task_run_id}] detached TA strategy failed: {err}");
@@ -327,7 +331,6 @@ async fn run_ta_config(
     let indicator_refs =
         crate::strategy::ta_rule::gather_indicator_refs(&config.strategy_config.rules);
     let cadence = config.strategy_config.resolved_cadence();
-    let mut initial_mark = ticks.first().map(|t| t.market.mark_price);
     let mut previous_prices = ticks.last().map(|tick| PriceHistory {
         mark: tick.market.mark_price,
         mid: tick.market.mid_price,
@@ -369,7 +372,6 @@ async fn run_ta_config(
                 continue;
             }
         };
-        let initial_mark_for_tick = *initial_mark.get_or_insert(market_snap.mark_price);
         let (position, account_health) = match mode {
             StrategyMode::Paper => match paper_position_snapshot_pub(ctx, &symbol).await {
                 Ok(snap) => snap,
@@ -400,9 +402,14 @@ async fn run_ta_config(
         };
 
         if matches!(mode, StrategyMode::ConfirmEach | StrategyMode::AutoExecute) {
-            config
-                .safety_policy
-                .validate_market(initial_mark_for_tick, &market_snap)?;
+            // TA strategies expect price to move over a run, so we compare against
+            // the previous tick's mark rather than the launch mark. On the very
+            // first tick `previous_prices` is None and the drift check is skipped.
+            if let Some(prev_mark) = previous_prices.as_ref().map(|p| p.mark) {
+                config
+                    .safety_policy
+                    .validate_market_rolling(prev_mark, &market_snap)?;
+            }
             config.safety_policy.validate_account(&account_health)?;
         }
 
@@ -623,6 +630,28 @@ async fn run_ta_config(
         ledger.last_updated_at = Utc::now().to_rfc3339();
         write_run_ledger(&runs_dir, &ledger)?;
 
+        // Re-snapshot position when a rule actually filled, so the tick records
+        // post-execution state alongside the pre-execution `position` the rule
+        // saw. Without this the very tick that fires reports stale (pre-fill)
+        // position data and agents have to wait one tick to see the trade.
+        let position_after_action = if matches!(status, StrategySliceStatus::Filled) {
+            match mode {
+                StrategyMode::Paper => paper_position_snapshot_pub(ctx, &symbol)
+                    .await
+                    .ok()
+                    .map(|(snap, _)| snap),
+                StrategyMode::ConfirmEach | StrategyMode::AutoExecute => {
+                    live_position_snapshot_pub(ctx, &symbol, market_snap.mark_price)
+                        .await
+                        .ok()
+                        .map(|(snap, _)| snap)
+                }
+                StrategyMode::DryRun => None,
+            }
+        } else {
+            None
+        };
+
         let final_tick = !config.run_until_stopped && tick_number >= config.max_ticks;
         let stop_reason = if let Some(max) = config.strategy_config.max_firings {
             if max > 0 && cooldown.total_firings >= max {
@@ -642,7 +671,7 @@ async fn run_ta_config(
             symbol: symbol.clone(),
             side: fired_side,
             tick: tick_number,
-            slices_total: config.max_ticks,
+            slices_total: effective_slices_total(&config),
             timestamp: Utc::now().to_rfc3339(),
             elapsed_ms: started.elapsed().as_millis(),
             market: market_snap,
@@ -650,6 +679,7 @@ async fn run_ta_config(
             execution,
             progress: progress.clone(),
             position,
+            position_after_action,
             account_health,
             next_tick: {
                 let delay = cadence.delay_seconds(Utc::now().timestamp().max(0) as u64);
@@ -724,7 +754,7 @@ async fn run_ta_config(
         completed_at: ledger.completed_at.clone(),
         status: ledger.status.clone(),
         slices_completed: progress.slices_filled,
-        slices_total: config.max_ticks,
+        slices_total: effective_slices_total(&config),
         cumulative_notional_usdc: progress.cumulative_notional_usdc,
         cumulative_tokens: progress.cumulative_tokens,
         vwap: progress.vwap,
@@ -1297,7 +1327,7 @@ fn write_partial_report(
         completed_at: ledger.completed_at.clone(),
         status: ledger.status.clone(),
         slices_completed: progress.slices_filled,
-        slices_total: config.max_ticks,
+        slices_total: effective_slices_total(config),
         cumulative_notional_usdc: progress.cumulative_notional_usdc,
         cumulative_tokens: progress.cumulative_tokens,
         vwap: progress.vwap,
@@ -1322,6 +1352,18 @@ fn write_partial_report(
 }
 
 // ── Plumbing ───────────────────────────────────────────────────────────────
+
+/// `run_until_stopped` runs have no fixed end, so we emit `u32::MAX` as a
+/// sentinel — display code already hides it from `progress N/<total>` strings.
+/// Without this, ticks carry the unrelated CLI default `--max-ticks 60` and
+/// look like a TWAP slice plan that doesn't apply to TA.
+fn effective_slices_total(config: &TaRunConfig) -> u32 {
+    if config.run_until_stopped {
+        u32::MAX
+    } else {
+        config.max_ticks
+    }
+}
 
 fn size_positive(size: &SizeSpec) -> bool {
     match size {
@@ -1369,7 +1411,7 @@ fn build_ledger(config: &TaRunConfig, started_at: &str) -> StrategyRunLedger {
         interval_seconds: cadence.nominal_interval_seconds(),
         run_until_stopped: config.run_until_stopped,
         stale_after_seconds: None,
-        slices_total: config.max_ticks,
+        slices_total: effective_slices_total(config),
         totals: StrategyLedgerTotals::default(),
         slices: Vec::new(),
         last_updated_at: started_at.to_string(),
@@ -1568,4 +1610,128 @@ fn render_live_tick(tick: &StrategyTick) {
         println!("Note: {}", note);
     }
     println!();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::strategy::ta_rule::TaStrategyConfig;
+
+    fn config_with(max_ticks: u32, run_until_stopped: bool) -> TaRunConfig {
+        TaRunConfig {
+            run_id: "test".to_string(),
+            run_label: None,
+            wallet: None,
+            mode: StrategyMode::Paper,
+            max_ticks,
+            run_until_stopped,
+            strategy_config: TaStrategyConfig {
+                symbol: "SOL".to_string(),
+                interval_seconds: 60,
+                cadence: None,
+                margin_mode: StrategyMarginMode::default(),
+                isolated_collateral: None,
+                max_concurrent_position_tokens: None,
+                max_firings: None,
+                rules: Vec::new(),
+            },
+            safety_policy: StrategySafetyPolicy::default(),
+        }
+    }
+
+    #[test]
+    fn slices_total_uses_max_ticks_for_bounded_runs() {
+        let config = config_with(60, false);
+        assert_eq!(effective_slices_total(&config), 60);
+    }
+
+    #[test]
+    fn slices_total_is_sentinel_for_run_until_stopped() {
+        // u32::MAX is the sentinel the display layer hides from `N/total`
+        // output; without this we emit the CLI default 60 and the response
+        // reads like a TWAP slice plan.
+        let config = config_with(60, true);
+        assert_eq!(effective_slices_total(&config), u32::MAX);
+    }
+
+    fn skeleton_tick() -> StrategyTick {
+        StrategyTick {
+            run_id: "r".to_string(),
+            strategy: "ta".to_string(),
+            mode: StrategyMode::Paper,
+            symbol: "SOL".to_string(),
+            side: StrategySide::Buy,
+            tick: 1,
+            slices_total: u32::MAX,
+            timestamp: "2026-05-19T00:00:00Z".to_string(),
+            elapsed_ms: 0,
+            market: StrategyMarketSnapshot {
+                mark_price: 0.0,
+                mid_price: 0.0,
+                funding_rate: 0.0,
+            },
+            planned_action: StrategyPlannedAction {
+                action: "noop".to_string(),
+                order_type: "noop".to_string(),
+                slice_notional_usdc: None,
+                slice_tokens: None,
+                executable_notional_usdc: None,
+                executable_tokens: None,
+                executable_base_lots: None,
+                rounding_note: None,
+            },
+            execution: StrategyExecution::default(),
+            progress: StrategyProgress::default(),
+            position: StrategyPositionSnapshot::default(),
+            position_after_action: None,
+            account_health: StrategyAccountHealth::default(),
+            next_tick: StrategyNextTick {
+                next_tick_at: None,
+                delay_seconds: None,
+                stop_reason: None,
+            },
+        }
+    }
+
+    #[test]
+    fn position_after_action_is_skipped_when_none() {
+        let tick = skeleton_tick();
+        let json = serde_json::to_string(&tick).unwrap();
+        assert!(
+            !json.contains("position_after_action"),
+            "None should be omitted from serialized tick: {}",
+            json
+        );
+    }
+
+    #[test]
+    fn position_after_action_round_trips_when_some() {
+        let mut tick = skeleton_tick();
+        tick.position_after_action = Some(StrategyPositionSnapshot {
+            side: Some("short".to_string()),
+            size_tokens: 0.5,
+            ..Default::default()
+        });
+        let json = serde_json::to_string(&tick).unwrap();
+        assert!(json.contains("\"position_after_action\""));
+        let back: StrategyTick = serde_json::from_str(&json).unwrap();
+        let after = back.position_after_action.unwrap();
+        assert_eq!(after.side.as_deref(), Some("short"));
+        assert_eq!(after.size_tokens, 0.5);
+    }
+
+    #[test]
+    fn position_after_action_defaults_to_none_for_legacy_payloads() {
+        // Older ledgers / reports written before this field existed must still
+        // deserialize cleanly. Strip the field and confirm it comes back as None.
+        let mut tick = skeleton_tick();
+        tick.position_after_action = Some(StrategyPositionSnapshot::default());
+        let mut value: serde_json::Value = serde_json::to_value(&tick).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("position_after_action");
+        let back: StrategyTick = serde_json::from_value(value).unwrap();
+        assert!(back.position_after_action.is_none());
+    }
 }

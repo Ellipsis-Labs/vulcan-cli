@@ -140,6 +140,32 @@ impl StrategySafetyPolicy {
         Ok(())
     }
 
+    /// Rolling per-tick drift check intended for strategies (e.g. TA) where the
+    /// price is expected to move over the run. Compares the current mark to the
+    /// previous tick's mark rather than a fixed launch-time anchor, so trending
+    /// markets do not exhaust the drift budget. Still catches single-tick gaps
+    /// and feed glitches.
+    pub fn validate_market_rolling(
+        &self,
+        previous_mark: f64,
+        market: &StrategyMarketSnapshot,
+    ) -> Result<(), VulcanError> {
+        if previous_mark <= 0.0 {
+            return Ok(());
+        }
+        let drift_bps = ((market.mark_price - previous_mark).abs() / previous_mark) * 10_000.0;
+        if drift_bps > self.max_price_drift_bps {
+            return Err(VulcanError::validation(
+                "STRATEGY_PRICE_DRIFT",
+                format!(
+                    "single-tick price drift {:.2} bps exceeds max_price_drift_bps {:.2}",
+                    drift_bps, self.max_price_drift_bps
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn validate_account(&self, health: &StrategyAccountHealth) -> Result<(), VulcanError> {
         if let Some(risk_state) = &health.risk_state {
             let risk_lower = risk_state.to_ascii_lowercase();
@@ -283,6 +309,52 @@ mod tests {
         let policy = StrategySafetyPolicy::default();
         let err = policy.validate_plan(Some(2_000.0), Some(10.0)).unwrap_err();
         assert_eq!(err.code, "STRATEGY_SAFETY_LIMIT");
+    }
+
+    fn snap(mark: f64) -> StrategyMarketSnapshot {
+        StrategyMarketSnapshot {
+            mark_price: mark,
+            mid_price: mark,
+            funding_rate: 0.0,
+        }
+    }
+
+    #[test]
+    fn rolling_drift_passes_for_trend_under_threshold() {
+        // 100 bps default; previous tick at 100, current at 100.5 → 50 bps drift.
+        let policy = StrategySafetyPolicy::default();
+        policy.validate_market_rolling(100.0, &snap(100.5)).unwrap();
+    }
+
+    #[test]
+    fn rolling_drift_trips_on_single_tick_gap() {
+        // previous 100 → current 105 → 500 bps single-tick gap.
+        let policy = StrategySafetyPolicy::default();
+        let err = policy
+            .validate_market_rolling(100.0, &snap(105.0))
+            .unwrap_err();
+        assert_eq!(err.code, "STRATEGY_PRICE_DRIFT");
+        assert!(err.message.contains("single-tick"));
+    }
+
+    #[test]
+    fn rolling_drift_skipped_for_non_positive_baseline() {
+        // First-tick condition (no baseline yet) is modeled by previous_mark <= 0.
+        let policy = StrategySafetyPolicy::default();
+        policy.validate_market_rolling(0.0, &snap(100.0)).unwrap();
+        policy.validate_market_rolling(-1.0, &snap(100.0)).unwrap();
+    }
+
+    #[test]
+    fn rolling_drift_does_not_compound_over_run() {
+        // Two consecutive 50-bps moves should both pass: under the run-anchored
+        // semantics, the second tick would have shown 100 bps total drift and
+        // the third tick (150 bps cumulative) would have tripped. Rolling
+        // baseline only sees 50 bps per step.
+        let policy = StrategySafetyPolicy::default();
+        policy.validate_market_rolling(100.0, &snap(100.5)).unwrap();
+        policy.validate_market_rolling(100.5, &snap(101.0)).unwrap();
+        policy.validate_market_rolling(101.0, &snap(101.5)).unwrap();
     }
 
     #[test]

@@ -191,6 +191,12 @@ pub struct StrategyTick {
     pub execution: StrategyExecution,
     pub progress: StrategyProgress,
     pub position: StrategyPositionSnapshot,
+    /// Position snapshot captured *after* this tick's action executed. Only
+    /// populated when a rule fired and produced a fill; otherwise `None` and the
+    /// post-tick state equals `position`. Lets agents see the immediate
+    /// post-fill state instead of waiting for the next tick to re-snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position_after_action: Option<StrategyPositionSnapshot>,
     pub account_health: StrategyAccountHealth,
     pub next_tick: StrategyNextTick,
 }

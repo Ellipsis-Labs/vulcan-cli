@@ -250,6 +250,9 @@ Agents should treat `distance < 500bps` or `risk_state != healthy` as a strong s
 
 ## Notes And Gotchas
 
+- **Price-drift guardrail is *per tick*, not run-anchored**: live modes call `validate_market_rolling` against the **previous tick's mark**, so `max_price_drift_bps` clamps single-tick gaps / feed glitches and lets multi-bar trends accumulate without tripping. The first tick has no baseline and is skipped. Set the override only to harden against gap risk on a per-tick basis (e.g. `200` = halt on a 2% move in one tick).
+- **`slices_total` on `run_until_stopped` runs**: the field is emitted as `u32::MAX` and hidden from `progress N/total` displays. There is no TWAP-style slice plan — use `progress.cumulative_*` and the firings count instead.
+- **`position_after_action`**: on ticks where a rule actually fills, a second position snapshot is captured *after* execution and emitted in the tick alongside the pre-action `position`. Use `position_after_action` when you need the post-fill state immediately; `position` remains the view the rule's condition evaluated against.
 - **Indicator dedupe**: rules sharing the same `IndicatorRef` only fetch + compute once per tick. Compose freely without worrying about API hits.
 - **First-firing-wins**: rule order matters. Place the most specific / highest-priority rules first.
 - **Warmup**: each indicator needs N candles before producing values; the runner will fail the tick with `INDICATOR_WARMUP_INSUFFICIENT` if the API returns too few. Bump timeframes from `1m` to `15m`/`1h` if you see this.

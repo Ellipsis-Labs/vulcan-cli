@@ -11,6 +11,7 @@ pub mod ta;
 pub mod ta_rule;
 pub mod twap;
 pub mod types;
+pub mod watchdog;
 
 pub use grid::{GridRunConfig, GridRunResult};
 pub use log::{
