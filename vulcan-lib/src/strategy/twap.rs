@@ -1179,48 +1179,12 @@ async fn execute_live_slice(
         ));
     };
 
-    let reconcile_outcome =
-        reconcile_fill_by_tx(ctx, &config.symbol, &tx_signature, &execution).await?;
-
-    match reconcile_outcome {
-        ReconcileOutcome::Matched(mut reconciled) => {
-            reconciled.note =
-                Some("matched authoritative trade history by transaction signature".to_string());
-            Ok(SliceOutcome::filled(reconciled))
-        }
-        ReconcileOutcome::Missing => {
-            execution.note = Some(format!(
-                "no authoritative trade-history match found for tx {}; continuing and reconciling in background",
-                tx_signature
-            ));
-            spawn_background_reconciliation(ctx, config, tx_signature, execution.clone());
-            Ok(SliceOutcome::filled(execution))
-        }
-        ReconcileOutcome::Ambiguous(matches) => {
-            execution.note = Some(format!(
-                "found {} possible trade-history matches for tx {}; continuing and reconciling in background",
-                matches, tx_signature
-            ));
-            spawn_background_reconciliation(ctx, config, tx_signature, execution.clone());
-            Ok(SliceOutcome::filled(execution))
-        }
-        ReconcileOutcome::Pending => {
-            execution.note = Some(format!(
-                "trade-history reconciliation pending for tx {}; continuing and reconciling in background",
-                tx_signature
-            ));
-            spawn_background_reconciliation(ctx, config, tx_signature, execution.clone());
-            Ok(SliceOutcome::filled(execution))
-        }
-        ReconcileOutcome::Failed(reason) => {
-            execution.note = Some(format!(
-                "trade-history reconciliation failed for tx {}: {}; continuing with submitted transaction estimate",
-                tx_signature, reason
-            ));
-            spawn_background_reconciliation(ctx, config, tx_signature, execution.clone());
-            Ok(SliceOutcome::filled(execution))
-        }
-    }
+    execution.note = Some(format!(
+        "submitted tx {}; reconciling in background",
+        tx_signature
+    ));
+    spawn_background_reconciliation(ctx, config, tx_signature, execution.clone());
+    Ok(SliceOutcome::filled(execution))
 }
 
 fn spawn_background_reconciliation(

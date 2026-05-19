@@ -202,6 +202,19 @@ Every tick must surface, in this order:
 
 Lead with execution progress over account equity — equity blends fees and mark-to-market movement, so it is misleading as a headline number.
 
+### Progress Surface (Task-List Render)
+
+In addition to the inline 8-field block above, render strategy-run progress as a **client-native task checklist** when the host agent exposes one. This is the visible "running TWAP… checklist crossed out per tick" surface, and it must coexist with the 8-field message body — the task list is the *progress indicator*, the message body is the *tick report*.
+
+Capability detection — apply the first option your client supports:
+
+1. **Claude Code (and other clients with `TaskCreate`/`TaskUpdate`/`TaskList`)**: create one task per planned slice immediately after a successful strategy start, before the first `wait_next_tick` call. Use `subject: "Tick K/N — <symbol> <side> ~$X"` and `activeForm: "Filling tick K/N"`. Transition each task `pending → in_progress` right before its `wait_next_tick` poll, and `in_progress → completed` once the tick lands. On pause or stop, mark the still-`pending` tasks as `deleted` (not `completed`) so the strikethrough doesn't lie about what filled. The harness loading animation surrounds the in-flight `wait_next_tick` call automatically — no separate work needed.
+2. **Clients with a TodoWrite-style tool**: same pattern, one todo per slice, mark each as completed as it lands.
+3. **Clients with structured plan/step UIs (e.g. some IDE agents)**: emit one step per slice and transition step state on each tick.
+4. **Plain MCP/CLI clients with no task surface**: the canonical 8-field message body above is the entire surface. Do not synthesize a fake task list inside the message body when a native one would have rendered.
+
+The task-list render is independent of strategy mode — apply it for paper, dry-run, confirm-each, and auto-execute alike. For grid and TA strategies that don't have a fixed slice count, render one task per *planned firing window* or *expected order layer* instead, and document any open-ended runs as a single "Monitoring <strategy>" task that completes on stop.
+
 ### Drift Reporting
 
 Report price drift from the start mark as guardrail context. The runner enforces `max_price_drift_bps`; stricter or differently shaped drift triggers can still be monitored by the agent.
@@ -321,4 +334,5 @@ Final reports should include these columns when available: slice, time, fill ID 
 10. The Vulcan runner supports sub-minute foreground cadence. Apply a 60-second practical minimum only to agent-managed scheduler fallbacks that cannot wake faster.
 11. Never round a user-requested cadence up or down and continue automatically. Ask first, wait for the answer, then schedule.
 12. Every executed slice must surface the full eight-field [Per-Tick Render Checklist](#per-tick-render-checklist-required) above — header, market snapshot with drift, planned vs executable, execution result with full tx signature, cumulative progress, position, account health, and next tick. Do not condense or skip fields when the data is available from the tick log.
+13. When the host client exposes a task/checklist tool (e.g. `TaskCreate`/`TaskUpdate`, TodoWrite, plan steps), render strategy-run progress as a [task-list checklist](#progress-surface-task-list-render) alongside the 8-field message body — one task per planned slice, transitioning `pending → in_progress → completed` per tick. Clients without that surface stay on the canonical 8-field block alone; do not fabricate a fake checklist inline.
 
