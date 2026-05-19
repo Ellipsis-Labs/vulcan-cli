@@ -69,7 +69,7 @@ vulcan agent health -o json    # readiness and next steps
 vulcan agent mcp doctor --target cursor --scope user -o json
 ```
 
-Setup creates `~/.vulcan/config.toml`, checks trader registration status, can complete registration with an access code or referral code, can install read-only/paper MCP config, and can log in to the Phoenix API with a wallet signature.
+Setup creates `~/.vulcan/config.toml`, checks trader registration status, can complete registration with an access code or referral code, and can install read-only/paper MCP config. The Phoenix API session is signed in automatically using the configured wallet — no separate login step is required.
 
 MCP is optional for paper and dry-run usage. For agent-driven live trading, prefer dangerous MCP with an unlocked session wallet: `vulcan agent mcp install --target cursor --dangerous`. Use this only after the user accepts that `VULCAN_WALLET_PASSWORD` may live in plaintext agent config.
 

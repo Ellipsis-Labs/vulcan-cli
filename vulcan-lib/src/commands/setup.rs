@@ -444,23 +444,29 @@ async fn finish_setup(
             .flatten()
             .is_some();
 
-    if has_wallet_for_api_login
-        && prompt_yn(
-            "  Log in to the Phoenix API with wallet signature now?",
-            false,
-        )?
-    {
+    if has_wallet_for_api_login {
         let result = if let Some((wallet_name, wallet)) = added_wallet_for_auth.as_ref() {
             crate::commands::auth::login_with_wallet(&setup_ctx, wallet, Some(wallet_name.clone()))
-                .await?
+                .await
         } else {
-            crate::commands::auth::login_default_wallet(&setup_ctx).await?
+            crate::commands::auth::login_default_wallet(&setup_ctx).await
         };
-        println!(
-            "  ✓ Phoenix API session stored at {}",
-            result.status.session_path
-        );
-        println!("    {}", result.note);
+        match result {
+            Ok(ok) => {
+                println!(
+                    "  ✓ Phoenix API session stored at {}",
+                    ok.status.session_path
+                );
+                println!("    {}", ok.note);
+            }
+            Err(err) => {
+                println!(
+                    "  ○ Skipped Phoenix API login ({}: {})",
+                    err.code, err.message
+                );
+                println!("    Run `vulcan auth login` later if you need authenticated reads.");
+            }
+        }
         println!();
     }
 
