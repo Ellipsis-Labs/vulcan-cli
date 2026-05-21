@@ -48,5 +48,9 @@ pub enum TaCommand {
         /// Candle timeframe.
         #[arg(long, default_value = "1h")]
         timeframe: String,
+
+        /// Comma-separated indicator subset (e.g. "rsi,atr,bbands"). Omit for the default bundle.
+        #[arg(long, value_delimiter = ',')]
+        indicators: Option<Vec<String>>,
     },
 }

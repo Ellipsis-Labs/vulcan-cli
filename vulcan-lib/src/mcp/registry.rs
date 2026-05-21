@@ -1245,14 +1245,19 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "vulcan_ta_report",
-        description: "Bundled multi-indicator snapshot (RSI, MACD, BBands, ATR, ADX) for market-intel reports. One call summarizes momentum, volatility, and trend strength.",
+        description: "Bundled multi-indicator snapshot (RSI, MACD, BBands, ATR, ADX by default) for market-intel reports. Pass 'indicators' to request a custom subset.",
         group: "ta",
         dangerous: false,
         schema: || json!({
             "type": "object",
             "properties": {
                 "symbol": { "type": "string", "description": "Market symbol, e.g. SOL" },
-                "timeframe": { "type": "string", "description": "Candle interval", "default": "1h" }
+                "timeframe": { "type": "string", "description": "Candle interval", "default": "1h" },
+                "indicators": {
+                    "type": "array",
+                    "items": { "type": "string", "enum": ["sma","ema","rsi","macd","bbands","atr","vwap","adx","stoch"] },
+                    "description": "Optional subset of indicators to compute. Omit for the default bundle."
+                }
             },
             "required": ["symbol"],
             "additionalProperties": false

@@ -424,21 +424,24 @@ impl crate::output::TableRenderable for IndicatorReport {
     }
 }
 
+pub const DEFAULT_REPORT_KINDS: &[IndicatorKind] = &[
+    IndicatorKind::Rsi,
+    IndicatorKind::Macd,
+    IndicatorKind::Bbands,
+    IndicatorKind::Atr,
+    IndicatorKind::Adx,
+];
+
 pub async fn report(
     ctx: &AppContext,
     symbol: &str,
     timeframe: &str,
+    kinds: Option<&[IndicatorKind]>,
 ) -> Result<IndicatorReport, VulcanError> {
-    let kinds = [
-        IndicatorKind::Rsi,
-        IndicatorKind::Macd,
-        IndicatorKind::Bbands,
-        IndicatorKind::Atr,
-        IndicatorKind::Adx,
-    ];
+    let kinds = kinds.unwrap_or(DEFAULT_REPORT_KINDS);
     let mut indicators = Vec::with_capacity(kinds.len());
     for kind in kinds {
-        let request = IndicatorRequest::new(kind);
+        let request = IndicatorRequest::new(*kind);
         match compute(ctx, symbol, timeframe, &request, None).await {
             Ok(series) => indicators.push(series),
             // Skip indicators that didn't have enough warmup rather than failing the whole report.

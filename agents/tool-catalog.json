@@ -1838,7 +1838,7 @@
       "name": "vulcan_ta_report",
       "command": "vulcan ta report",
       "group": "ta",
-      "description": "Bundled multi-indicator snapshot (RSI, MACD, BBands, ATR, ADX) for market-intel reports. One call summarizes momentum, volatility, and trend strength.",
+      "description": "Bundled multi-indicator snapshot (RSI, MACD, BBands, ATR, ADX by default) for market-intel reports. Pass 'indicators' to request a custom subset.",
       "auth_required": false,
       "dangerous": false,
       "parameters": [
@@ -1854,6 +1854,12 @@
           "required": false,
           "default": "1h",
           "description": "Candle interval"
+        },
+        {
+          "name": "indicators",
+          "type": "string[]",
+          "required": false,
+          "description": "Optional subset of indicators to compute. Omit for the default bundle."
         }
       ],
       "example": "vulcan ta report SOL --timeframe 1h -o json"

@@ -7,6 +7,27 @@ use crate::cli::ta::TaCommand;
 use crate::context::AppContext;
 use crate::error::VulcanError;
 use crate::indicators::{self, IndicatorKind, IndicatorRequest, TriggerSpec};
+
+fn parse_indicator_list(items: &[String]) -> Result<Vec<IndicatorKind>, VulcanError> {
+    let mut out = Vec::with_capacity(items.len());
+    for raw in items {
+        let token = raw.trim();
+        if token.is_empty() {
+            continue;
+        }
+        let kind = IndicatorKind::from_str(token)?;
+        if !out.contains(&kind) {
+            out.push(kind);
+        }
+    }
+    if out.is_empty() {
+        return Err(VulcanError::validation(
+            "INVALID_INDICATOR",
+            "--indicators must list at least one indicator",
+        ));
+    }
+    Ok(out)
+}
 use crate::output::render_success;
 
 pub async fn execute(ctx: &AppContext, cmd: TaCommand) -> Result<(), VulcanError> {
@@ -59,8 +80,16 @@ pub async fn execute(ctx: &AppContext, cmd: TaCommand) -> Result<(), VulcanError
             Ok(())
         }
 
-        TaCommand::Report { symbol, timeframe } => {
-            let report = indicators::report(ctx, &symbol, &timeframe).await?;
+        TaCommand::Report {
+            symbol,
+            timeframe,
+            indicators: requested,
+        } => {
+            let kinds = match requested.as_deref() {
+                Some(list) if !list.is_empty() => Some(parse_indicator_list(list)?),
+                _ => None,
+            };
+            let report = indicators::report(ctx, &symbol, &timeframe, kinds.as_deref()).await?;
             render_success(
                 ctx.output_format,
                 &report,

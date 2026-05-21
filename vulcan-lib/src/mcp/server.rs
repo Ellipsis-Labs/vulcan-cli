@@ -145,7 +145,31 @@ impl VulcanMcpServer {
             "vulcan_ta_report" => {
                 let symbol = arg_str(args, "symbol")?;
                 let timeframe = arg_str_or(args, "timeframe", "1h");
-                let report = crate::indicators::report(&self.ctx, &symbol, &timeframe).await?;
+                let kinds = match args.get("indicators") {
+                    Some(serde_json::Value::Array(items)) if !items.is_empty() => {
+                        let mut out = Vec::with_capacity(items.len());
+                        for v in items {
+                            let s = v.as_str().ok_or_else(|| {
+                                crate::error::VulcanError::validation(
+                                    "INVALID_INDICATOR",
+                                    "'indicators' must be an array of strings",
+                                )
+                            })?;
+                            let kind =
+                                <crate::indicators::IndicatorKind as std::str::FromStr>::from_str(
+                                    s,
+                                )?;
+                            if !out.contains(&kind) {
+                                out.push(kind);
+                            }
+                        }
+                        Some(out)
+                    }
+                    _ => None,
+                };
+                let report =
+                    crate::indicators::report(&self.ctx, &symbol, &timeframe, kinds.as_deref())
+                        .await?;
                 Ok(serde_json::to_value(report).unwrap())
             }
 
