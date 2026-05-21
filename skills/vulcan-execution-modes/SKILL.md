@@ -86,10 +86,12 @@ Each mode has its own follow-up checklist. Collect everything in a single struct
 
 - **Paper balance** if not initialized: `vulcan paper init --balance <N>` (suggest $10,000 default).
 - **Tick interval / strategy-specific knobs** as the strategy demands.
+- **Do not** ask for a wallet. Paper mode never signs and never reads on-chain account state.
 
 ### After Dry-Run
 
 - No additional questions; the existing strategy config is enough.
+- Same wallet rule as paper: dry-run does not need a wallet.
 
 ### After Confirm-Each
 
@@ -107,6 +109,71 @@ Everything from confirm-each, plus:
 
 - **Time bound** — `--max-ticks <N>` or `--run-until-stopped` with an explicit out-of-band stop condition the user states (e.g. "stop at 6pm Eastern", "stop after 20 firings").
 - **Monitoring cadence** — how often the agent will poll `vulcan_strategy_monitor` and what triggers an alert back to the user (e.g. "ping me on any failed fill", "ping me if drawdown exceeds $X").
+
+## Mode-Branched Preflight (the no-wallet path)
+
+**Pick the mode before running any wallet-bound preflight.** Paper and dry-run never need a wallet, never read on-chain state, and must never trip `NO_DEFAULT_WALLET`. Skills that describe a "pre-trade checks" block must branch on mode — calling `vulcan_margin_status`, `vulcan_position_list`, `vulcan_trade_orders`, `vulcan_portfolio_*`, or any other wallet-resolving tool in paper/dry-run is a bug, not a defensive check.
+
+This is the canonical preflight shape; other skills should reference it rather than duplicate the wallet-bound checklist inline.
+
+### Pre-mode (no wallet, safe in any mode)
+
+These read only market data and indicators. Run as needed for the task:
+
+```
+vulcan_market_info       → { symbol }   # tick_size, base_lots_decimals, min lot
+vulcan_market_ticker     → { symbol }   # mark, mid, best bid/ask, 24h, funding
+vulcan_market_orderbook  → { symbol }   # depth on each side
+vulcan_ta_report         → { symbol, timeframe }   # ATR, BBands, RSI, ADX, etc.
+vulcan_market_candles    → { symbol, interval, limit }   # for swing levels
+```
+
+### Then ask the user for the mode (see [How To Format The Question](#how-to-format-the-question)).
+
+### Paper / Dry-Run preflight
+
+```
+vulcan_paper_status → {}
+```
+
+- If it returns `PAPER_NOT_INITIALIZED`, propose `vulcan paper init --balance <N>` (default $10,000) and run it after the user confirms. **Do not** chain into wallet creation, registration, or any `wallet`/`margin`/`position`/`portfolio` call.
+- For dry-run, even `paper_status` is optional — the runner only needs the strategy config. Skip it unless the user asks for paper state.
+- Skip `vulcan_margin_status`, `vulcan_position_list`, `vulcan_trade_orders`, `vulcan_portfolio_*`, `vulcan_wallet_list`, `vulcan_strategy_preflight` entirely. They require a resolved wallet and provide no signal in paper/dry-run.
+
+### Confirm-Each / Auto-Execute preflight
+
+```
+vulcan_wallet_list          → {}                  # confirm the intended wallet exists
+vulcan_strategy_preflight   → { wallet }          # must report READY
+vulcan_margin_status        → {}                  # risk_state = Healthy, collateral available
+vulcan_position_list        → {}                  # existing exposure on the symbol
+vulcan_trade_orders         → { symbol }          # avoid colliding with resting orders
+```
+
+Only here do wallet-bound calls run. If `vulcan_strategy_preflight` is not READY, surface the blockers verbatim and pause — do not attempt a workaround.
+
+### Quick reference
+
+| Tool                          | Paper | Dry-Run | Confirm-Each | Auto-Execute |
+|---|---|---|---|---|
+| `vulcan_market_*`             | ✓ | ✓ | ✓ | ✓ |
+| `vulcan_ta_*`                 | ✓ | ✓ | ✓ | ✓ |
+| `vulcan_paper_status`         | ✓ | optional | n/a | n/a |
+| `vulcan_paper_*` (trade ops)  | ✓ | (no, dry-run is plan-only) | n/a | n/a |
+| `vulcan_wallet_list`          | ✗ | ✗ | ✓ | ✓ |
+| `vulcan_margin_status`        | ✗ | ✗ | ✓ | ✓ |
+| `vulcan_position_list`        | ✗ | ✗ | ✓ | ✓ |
+| `vulcan_trade_orders`         | ✗ | ✗ | ✓ | ✓ |
+| `vulcan_portfolio_*`          | ✗ | ✗ | ✓ | ✓ |
+| `vulcan_strategy_preflight`   | ✗ | ✗ | ✓ (required) | ✓ (required) |
+
+### Recovering from a wrong-mode call
+
+If you already called a wallet-bound tool in paper/dry-run by mistake and got `NO_DEFAULT_WALLET`:
+
+- Do **not** treat it as an error that needs remediation. The error is correct: the call shouldn't have been made.
+- Do **not** suggest `vulcan wallet set-default` to the user as a fix. Setting a default wallet is unrelated to running the paper plan.
+- Acknowledge the wrong call in one sentence, drop it, and continue from the paper preflight above.
 
 ## Example Structured Prompt For A Strategy Launch
 

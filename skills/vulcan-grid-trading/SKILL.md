@@ -41,13 +41,32 @@ Grid spacing = (upper - lower) / total_levels
 
 ## Pre-Grid Checks
 
+Mode-agnostic — run first (no wallet required):
+
 ```
 1. vulcan_market_info      → { symbol: "SOL" }    # base_lots_decimals, tick_size, fees
 2. vulcan_market_ticker    → { symbol: "SOL" }    # current price (center the grid)
 3. vulcan_market_orderbook → { symbol: "SOL" }    # spread, depth
-4. vulcan_margin_status    → {}                    # enough collateral for worst case?
-5. vulcan_position_list    → {}                    # existing positions in this market
 ```
+
+Then pick the execution mode (per [`vulcan-execution-modes`](../vulcan-execution-modes/SKILL.md#how-to-format-the-question)) before any wallet-bound call.
+
+**Paper / Dry-Run:**
+
+```
+vulcan_paper_status    → {}    # if PAPER_NOT_INITIALIZED, propose `vulcan paper init --balance <N>`
+vulcan_paper_positions → {}    # existing simulated exposure
+```
+
+**Confirm-Each / Auto-Execute:**
+
+```
+vulcan_strategy_preflight → { wallet }   # must report READY
+vulcan_margin_status      → {}           # enough collateral for worst case?
+vulcan_position_list      → {}           # existing positions in this market
+```
+
+Never call `vulcan_margin_status` / `vulcan_position_list` / `vulcan_portfolio_*` in paper or dry-run — they resolve a wallet and provide no signal for simulated runs.
 
 ## Calculate Grid Levels
 

@@ -97,21 +97,38 @@ Do not say "confirm with you" and then proceed. Do not create the cron job until
 
 ## Pre-TWAP Checks
 
+Mode-agnostic — run first (no wallet required):
+
 ```
 MCP:
 1. vulcan_market_info      → { "symbol": "SOL" }    # base_lots_decimals, fees
 2. vulcan_market_ticker    → { "symbol": "SOL" }    # current price, volume
 3. vulcan_market_orderbook → { "symbol": "SOL" }    # depth — is there enough liquidity per slice?
-4. vulcan_margin_status    → {}                      # enough collateral for total position?
-5. vulcan_position_list    → {}                      # existing exposure
 
 CLI:
 1. vulcan market info SOL -o json
 2. vulcan market ticker SOL -o json
 3. vulcan market orderbook SOL -o json
-4. vulcan margin status -o json
-5. vulcan position list -o json
 ```
+
+Then pick the execution mode (per [`vulcan-execution-modes`](../vulcan-execution-modes/SKILL.md#how-to-format-the-question)) before any wallet-bound call.
+
+**Paper / Dry-Run** — paper-state only, no wallet:
+
+```
+vulcan_paper_status → {}      # if PAPER_NOT_INITIALIZED, propose `vulcan paper init --balance <N>`
+vulcan_paper_positions → {}   # existing simulated exposure
+```
+
+**Confirm-Each / Auto-Execute** — wallet-bound:
+
+```
+vulcan_strategy_preflight → { wallet }   # must report READY
+vulcan_margin_status      → {}           # enough collateral for total position?
+vulcan_position_list      → {}           # existing exposure
+```
+
+Never call `vulcan_margin_status` / `vulcan_position_list` / `vulcan_portfolio_*` in paper or dry-run — they resolve a wallet and provide no signal for simulated runs.
 
 ## Collateral-Based Alternatives
 

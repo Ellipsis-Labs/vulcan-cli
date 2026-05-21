@@ -20,7 +20,9 @@ Use this skill for:
 
 ## Pre-Trade Risk Checklist
 
-Before every trade, call these tools:
+**Applies to live modes only (confirm-each / auto-execute).** In paper and dry-run, these tools require a wallet you do not have and provide no signal — substitute the paper-state equivalents below. See [Mode-Branched Preflight](../vulcan-execution-modes/SKILL.md#mode-branched-preflight-the-no-wallet-path).
+
+Before every **live** trade, call these tools:
 
 ```
 1. vulcan_margin_status     → {}              # risk_state, collateral, PnL
@@ -28,6 +30,17 @@ Before every trade, call these tools:
 3. vulcan_trade_orders      → { symbol }      # resting orders consuming margin
 4. vulcan_market_orderbook  → { symbol }      # slippage check for market orders
 ```
+
+For **paper / dry-run**, the equivalent risk check is:
+
+```
+1. vulcan_paper_status      → {}              # equity, exposure_ratio, simulated PnL
+2. vulcan_paper_positions   → {}              # existing simulated positions
+3. vulcan_paper_orders      → {}              # resting paper orders
+4. vulcan_market_orderbook  → { symbol }      # slippage check (same as live)
+```
+
+The mental model is the same — collateral coverage, existing exposure, resting orders, liquidity — but every input comes from the local paper state file rather than on-chain account data. If `vulcan_paper_status` returns `PAPER_NOT_INITIALIZED`, propose `vulcan paper init --balance <N>` rather than directing the user to wallet setup.
 
 ## Margin Health States
 

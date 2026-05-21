@@ -50,6 +50,8 @@ Collect with the user before placing:
 
 Before placing, choose a mode via [`vulcan-execution-modes`](../vulcan-execution-modes/SKILL.md) (Paper / Dry-Run / Confirm-Each / Auto-Execute). Scale orders are typically a single batch placement, so Confirm-Each at the batch level (one approval covers the whole ladder) is standard.
 
+**Pick the mode before running any wallet-bound preflight.** The [Pre-Trade Checks](#pre-trade-checks) below branch on mode — in paper or dry-run, never call `vulcan_margin_status`, `vulcan_position_list`, `vulcan_trade_orders`, or any other wallet-resolving tool. See [Mode-Branched Preflight](../vulcan-execution-modes/SKILL.md#mode-branched-preflight-the-no-wallet-path).
+
 ## Prompting Pattern
 
 The agent **must** prompt the user for missing or unconfirmed inputs before placing. This is non-negotiable for the **price range** — whether you suggested it from TA or the user gave one. Use the host's structured-question facility if it has one (e.g. `AskUserQuestion`); otherwise ask in plain text and wait for an explicit reply.
@@ -109,13 +111,31 @@ Show what changed and ask whether to proceed, adjust, or cancel.
 
 ## Pre-Trade Checks
 
+Run **mode-agnostic** market checks first — they are read-only and safe in every mode:
+
 ```
 1. vulcan_market_info      → { symbol }    # base_lots_decimals, tick_size, min lot
 2. vulcan_market_ticker    → { symbol }    # current price for centering / TA
 3. vulcan_market_orderbook → { symbol }    # confirm side of book is empty above/below your range
-4. vulcan_margin_status    → {}            # worst-case margin coverage
-5. vulcan_position_list    → {}            # existing exposure in this market
-6. vulcan_trade_orders     → { symbol }    # avoid colliding with existing resting orders
+```
+
+Then ask the user for the execution mode (per [`vulcan-execution-modes`](../vulcan-execution-modes/SKILL.md#how-to-format-the-question)). Only after the mode is set should you run wallet-bound checks.
+
+**Paper / Dry-Run:** skip the wallet-bound block. The only paper-side check is:
+
+```
+vulcan_paper_status → {}     # if PAPER_NOT_INITIALIZED, propose `vulcan paper init --balance <N>`
+```
+
+Do not call `vulcan_margin_status`, `vulcan_position_list`, `vulcan_trade_orders`, `vulcan_portfolio_*`, or `vulcan_wallet_list` in paper/dry-run.
+
+**Confirm-Each / Auto-Execute:** also run:
+
+```
+4. vulcan_strategy_preflight → { wallet }   # must report READY
+5. vulcan_margin_status      → {}           # worst-case margin coverage
+6. vulcan_position_list      → {}           # existing exposure in this market
+7. vulcan_trade_orders       → { symbol }   # avoid colliding with existing resting orders
 ```
 
 For buy ladders, `upper_price` must be **at or below** the best ask (or `slide: true` is required). For sell ladders, `lower_price` must be **at or above** the best bid. Otherwise post-only placement rejects.

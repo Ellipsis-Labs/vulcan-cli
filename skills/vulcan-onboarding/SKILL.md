@@ -55,6 +55,10 @@ vulcan paper buy SOL --notional-usdc 100 --type market -o json
 vulcan paper status -o json
 ```
 
+**Paper needs no wallet.** Do not run any of `vulcan wallet create`, `vulcan wallet set-default`, `vulcan account register`, or `vulcan margin deposit` for a user who only wants to try paper trading. The paper engine reads live prices and writes a local state file at `~/.vulcan/paper-state.json` — it never resolves a wallet and never touches Solana. If the user hits `NO_DEFAULT_WALLET` from a wallet-bound tool while in paper, the call was the bug — not the missing wallet (see [Mode-Branched Preflight](../vulcan-execution-modes/SKILL.md#mode-branched-preflight-the-no-wallet-path)). Direct them back to `vulcan paper status` and continue without setting up a wallet.
+
+Steps 2–6 below are for **live** setup only and should not run if the user has indicated they only want paper. Surface live setup explicitly: *"Want to set up a wallet to graduate from paper to live?"* — only proceed when they say yes.
+
 ## Prerequisites
 
 - Solana wallet with SOL (for transaction fees) and USDC (for collateral).
@@ -143,6 +147,8 @@ All checks should pass. If any fail, the status or health output includes recove
 
 ## Step 7: First Trade (Optional)
 
+This is the **live** first trade — only run after Steps 2–6 are complete. For a paper first trade, use the paper quick start at the top of this skill.
+
 Follow the safe order flow from the `vulcan-trade-execution` skill:
 
 ```
@@ -158,7 +164,7 @@ Then place a small test trade.
 
 | Issue                 | Fix                                                          |
 | --------------------- | ------------------------------------------------------------ |
-| `NO_DEFAULT_WALLET`   | `vulcan wallet set-default <name>`                           |
+| `NO_DEFAULT_WALLET`   | For live: `vulcan wallet set-default <name>`. For paper/dry-run: the call shouldn't have been made — switch to `vulcan_paper_*` tools and continue without a wallet. |
 | `DECRYPT_FAILED`      | Wrong password. Set `VULCAN_WALLET_PASSWORD`                 |
 | `NO_TRADER_ACCOUNT`   | Register with an access code or referral code                |
 | `CONFIG_ERROR`        | Run `vulcan setup`                                           |

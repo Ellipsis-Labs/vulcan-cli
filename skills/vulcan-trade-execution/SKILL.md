@@ -24,14 +24,23 @@ Do not use this skill to manually split a scheduled or multi-slice strategy when
 
 ### 1. Gather market context
 
+Mode-agnostic (always safe):
+
 ```
 vulcan_market_ticker → { symbol: "SOL" }     # current price, funding rate
-vulcan_margin_status → {}                     # available collateral, risk state
-vulcan_position_list → {}                     # existing positions
-vulcan_trade_orders  → { symbol: "SOL" }     # existing resting orders
+vulcan_market_info   → { symbol: "SOL" }     # tick_size, base_lots_decimals (needed for size/limit/leverage)
 ```
 
-Call `vulcan_market_info` too when using base-lot `size`, placing limit orders, or checking fees/leverage tiers.
+Then ask for the execution mode (see [`vulcan-execution-modes`](../vulcan-execution-modes/SKILL.md#how-to-format-the-question)). After the user picks a mode, branch the wallet-bound checks:
+
+- **Paper / Dry-Run** — run `vulcan_paper_status` (handle `PAPER_NOT_INITIALIZED` by proposing `vulcan paper init --balance <N>`). Do **not** call `vulcan_margin_status`, `vulcan_position_list`, `vulcan_trade_orders`, `vulcan_portfolio_*`, or `vulcan_wallet_list`. Paper has its own state file and never resolves a wallet.
+- **Confirm-Each / Auto-Execute** — run the live checklist:
+  ```
+  vulcan_strategy_preflight → { wallet }    # must report READY
+  vulcan_margin_status      → {}            # available collateral, risk state
+  vulcan_position_list      → {}            # existing positions
+  vulcan_trade_orders       → { symbol }    # existing resting orders
+  ```
 
 ### 2. Choose size input
 
@@ -48,10 +57,10 @@ Example: Want 0.5 SOL, decimals=2 → 0.5 * 100 = 50 base lots.
 
 ### 3. Validate against constraints
 
-- Ensure `vulcan_margin_status` shows risk_state = Healthy.
-- Check leverage tiers — larger positions have lower max leverage.
-- Factor in existing positions (same-side increases exposure, opposite-side reduces).
-- For market orders, check `vulcan_market_orderbook` when size may be large relative to visible liquidity and warn about slippage.
+- For live modes, ensure `vulcan_margin_status` shows risk_state = Healthy. In paper/dry-run, validate against `vulcan_paper_status.equity` and `exposure_ratio` instead — same intent, no wallet needed.
+- Check leverage tiers — larger positions have lower max leverage. (Paper applies a simulated tier from market info; live reads `vulcan_margin_leverage_tiers`.)
+- Factor in existing positions (same-side increases exposure, opposite-side reduces). Use `vulcan_paper_positions` in paper, `vulcan_position_list` live.
+- For market orders, check `vulcan_market_orderbook` when size may be large relative to visible liquidity and warn about slippage. Safe in any mode.
 
 ### 4. Confirm with user
 
@@ -69,11 +78,18 @@ vulcan_trade → { symbol: "SOL", side: "buy", order_type: "market", size: 50, a
 
 ### 6. Verify
 
+For live modes:
 ```
 vulcan_position_list → {}    # confirm position opened
 ```
 
-Report the transaction signature to the user.
+For paper:
+```
+vulcan_paper_positions → {}  # confirm simulated position opened
+vulcan_paper_fills     → {}  # see the simulated fill
+```
+
+Report the transaction signature (live) or the paper fill id (paper) to the user.
 
 ## Market Order with TP/SL
 
