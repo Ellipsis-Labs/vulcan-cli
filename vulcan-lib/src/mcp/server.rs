@@ -473,6 +473,26 @@ impl VulcanMcpServer {
                 let result = commands::paper::reconcile(&self.ctx, symbol.as_deref()).await?;
                 Ok(serde_json::to_value(result).unwrap())
             }
+            "vulcan_paper_set_tpsl" => {
+                let symbol = arg_str(args, "symbol")?;
+                let tp_inputs = arg_tpsl_levels(args, "tp", "tp_levels")?;
+                let sl_inputs = arg_tpsl_levels(args, "sl", "sl_levels")?;
+                let result =
+                    commands::paper::set_tpsl(&self.ctx, &symbol, tp_inputs, sl_inputs).await?;
+                Ok(serde_json::to_value(result).unwrap())
+            }
+            "vulcan_paper_cancel_tpsl" => {
+                let symbol = arg_str(args, "symbol")?;
+                let tp = arg_bool_or(args, "tp", false);
+                let sl = arg_bool_or(args, "sl", false);
+                let result = commands::paper::cancel_tpsl(&self.ctx, &symbol, tp, sl)?;
+                Ok(serde_json::to_value(result).unwrap())
+            }
+            "vulcan_paper_triggers" => {
+                let symbol = arg_str_opt(args, "symbol");
+                let result = commands::paper::triggers(&self.ctx, symbol.as_deref())?;
+                Ok(serde_json::to_value(result).unwrap())
+            }
 
             // ── Strategy runners ───────────────────────────────────────
             "vulcan_strategy_twap_start" => {
@@ -883,6 +903,8 @@ impl VulcanMcpServer {
                     notional_usdc: arg_f64_opt(args, "notional_usdc"),
                 },
                 price: arg_f64_opt(args, "price"),
+                tp: arg_f64_opt(args, "tp"),
+                sl: arg_f64_opt(args, "sl"),
             },
         )
         .await?;

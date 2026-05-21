@@ -1328,6 +1328,8 @@ async fn place_paper_level(
         tokens: None,
         notional_usdc: None,
         price: Some(level.entry_price),
+        tp: level.take_profit_price,
+        sl: level.stop_loss_price,
     };
     let side = match level.entry_side {
         StrategySide::Buy => PaperSide::Buy,

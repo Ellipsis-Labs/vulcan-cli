@@ -195,6 +195,9 @@ fn command_log_name(command: &Command) -> &'static str {
             PaperCommand::Cancel { .. } => "paper.cancel",
             PaperCommand::CancelAll { .. } => "paper.cancel_all",
             PaperCommand::Reconcile { .. } => "paper.reconcile",
+            PaperCommand::SetTpsl { .. } => "paper.set_tpsl",
+            PaperCommand::CancelTpsl { .. } => "paper.cancel_tpsl",
+            PaperCommand::Triggers { .. } => "paper.triggers",
         },
         Command::History(cmd) => match cmd {
             HistoryCommand::Trades { .. } => "history.trades",

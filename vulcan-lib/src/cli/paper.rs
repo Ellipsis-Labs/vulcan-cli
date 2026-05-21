@@ -73,6 +73,48 @@ pub enum PaperCommand {
         /// Optional market symbol filter
         symbol: Option<String>,
     },
+
+    /// Set take-profit and/or stop-loss on an existing paper position. Mirrors
+    /// `trade set-tpsl` — same flag forms (single price or repeatable levels).
+    SetTpsl {
+        /// Market symbol (e.g., SOL)
+        symbol: String,
+        /// Single take-profit price covering the full position. Mutually
+        /// exclusive with --tp-level.
+        #[arg(long)]
+        tp: Option<f64>,
+        /// Single stop-loss price covering the full position. Mutually
+        /// exclusive with --sl-level.
+        #[arg(long)]
+        sl: Option<f64>,
+        /// Take-profit level as PRICE[:SIZE_TOKENS]. Repeat for laddered
+        /// exits, e.g. `--tp-level 90:0.5 --tp-level 95:0.5`. SIZE is in
+        /// base-asset tokens; omit for full position (single level only).
+        #[arg(long = "tp-level")]
+        tp_levels: Vec<String>,
+        /// Stop-loss level as PRICE[:SIZE_TOKENS]. Repeatable, same format
+        /// as --tp-level.
+        #[arg(long = "sl-level")]
+        sl_levels: Vec<String>,
+    },
+
+    /// Cancel take-profit and/or stop-loss on an existing paper position
+    CancelTpsl {
+        /// Market symbol (e.g., SOL)
+        symbol: String,
+        /// Cancel take-profit triggers
+        #[arg(long)]
+        tp: bool,
+        /// Cancel stop-loss triggers
+        #[arg(long)]
+        sl: bool,
+    },
+
+    /// List active paper TP/SL triggers
+    Triggers {
+        /// Optional market symbol filter
+        symbol: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, clap::Args)]
@@ -99,6 +141,16 @@ pub struct PaperOrderArgs {
     /// Limit price
     #[arg(long)]
     pub price: Option<f64>,
+
+    /// Optional take-profit price attached at order time. Activates immediately
+    /// on a market fill or crossing limit; stays pending on a resting limit
+    /// and activates when that order fills.
+    #[arg(long)]
+    pub tp: Option<f64>,
+
+    /// Optional stop-loss price attached at order time. Same semantics as --tp.
+    #[arg(long)]
+    pub sl: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

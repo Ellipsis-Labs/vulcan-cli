@@ -24,6 +24,8 @@ pub(crate) async fn execute_paper_market(
         tokens,
         notional_usdc,
         price: None,
+        tp: None,
+        sl: None,
     };
     let side = match side {
         StrategySide::Buy => PaperSide::Buy,

@@ -735,7 +735,7 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "vulcan_paper_trade",
-        description: "Place a paper market or limit order. No real funds or Solana transactions are used.",
+        description: "Place a paper market or limit order. No real funds or Solana transactions are used. Optional 'tp' / 'sl' attach single-price TP/SL at order time: active immediately on a market fill, pending on a resting limit (re-parents on fill). Order-time TP/SL is rejected when the order would reduce an opposite-side existing position — place the order first, then use vulcan_paper_set_tpsl.",
         group: "paper",
         dangerous: false,
         schema: || json!({
@@ -747,13 +747,15 @@ pub static TOOLS: &[ToolDef] = &[
                 "size": { "type": "number", "description": "Size in base lots" },
                 "tokens": { "type": "number", "description": "Size in base-asset tokens" },
                 "notional_usdc": { "type": "number", "description": "Size as USDC notional" },
-                "price": { "type": "number", "description": "Limit price" }
+                "price": { "type": "number", "description": "Limit price" },
+                "tp": { "type": "number", "description": "Take-profit price attached at order time" },
+                "sl": { "type": "number", "description": "Stop-loss price attached at order time" }
             },
             "required": ["symbol", "side", "order_type"],
             "additionalProperties": false
         }),
         command: "vulcan paper <buy|sell>",
-        example: "vulcan paper buy SOL --tokens 1 --type market -o json",
+        example: "vulcan paper buy SOL --tokens 1 --type market --tp 110 --sl 90 -o json",
         auth_required: false,
     },
     ToolDef {
@@ -803,6 +805,74 @@ pub static TOOLS: &[ToolDef] = &[
         }),
         command: "vulcan paper reconcile",
         example: "vulcan paper reconcile SOL -o json",
+        auth_required: false,
+    },
+    ToolDef {
+        name: "vulcan_paper_set_tpsl",
+        description: "Set take-profit and/or stop-loss on an existing paper position. Mirrors `vulcan_trade_set_tpsl`: supports a single full-position price ('tp'/'sl') or multi-level laddered exits ('tp_levels'/'sl_levels') with explicit sizes. Sums of level sizes must not exceed the current paper position.",
+        group: "paper",
+        dangerous: false,
+        schema: || {
+            let level_schema = json!({
+                "type": "object",
+                "properties": {
+                    "price": { "type": "number", "description": "Trigger and execution price" },
+                    "size": { "type": "number", "description": "Size in base-asset tokens (e.g., 0.5 SOL). Mutually exclusive with size_lots; omit both to use full position (single level only)." },
+                    "size_lots": { "type": "integer", "description": "Size in base lots. Mutually exclusive with size." }
+                },
+                "required": ["price"],
+                "additionalProperties": false
+            });
+            json!({
+                "type": "object",
+                "properties": {
+                    "symbol": { "type": "string", "description": "Market symbol, e.g. SOL" },
+                    "tp": { "type": "number", "description": "Single take-profit price covering the full position. Mutually exclusive with tp_levels." },
+                    "sl": { "type": "number", "description": "Single stop-loss price covering the full position. Mutually exclusive with sl_levels." },
+                    "tp_levels": { "type": "array", "items": level_schema.clone(), "description": "Take-profit levels, e.g. [{price: 90, size: 0.5}, {price: 95, size: 0.5}]. Mutually exclusive with tp." },
+                    "sl_levels": { "type": "array", "items": level_schema, "description": "Stop-loss levels. Mutually exclusive with sl." }
+                },
+                "required": ["symbol"],
+                "additionalProperties": false
+            })
+        },
+        command: "vulcan paper set-tpsl",
+        example: "vulcan paper set-tpsl SOL --tp-level 160:0.5 --tp-level 170:0.5 --sl-level 140 -o json",
+        auth_required: false,
+    },
+    ToolDef {
+        name: "vulcan_paper_cancel_tpsl",
+        description: "Cancel take-profit and/or stop-loss triggers on a paper position. Set the 'tp' / 'sl' booleans to choose which sides to clear.",
+        group: "paper",
+        dangerous: false,
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "symbol": { "type": "string", "description": "Market symbol, e.g. SOL" },
+                "tp": { "type": "boolean", "description": "Cancel take-profit triggers" },
+                "sl": { "type": "boolean", "description": "Cancel stop-loss triggers" }
+            },
+            "required": ["symbol"],
+            "additionalProperties": false
+        }),
+        command: "vulcan paper cancel-tpsl",
+        example: "vulcan paper cancel-tpsl SOL --tp --sl -o json",
+        auth_required: false,
+    },
+    ToolDef {
+        name: "vulcan_paper_triggers",
+        description: "List active paper TP/SL triggers, optionally filtered by symbol.",
+        group: "paper",
+        dangerous: false,
+        schema: || json!({
+            "type": "object",
+            "properties": {
+                "symbol": { "type": "string", "description": "Optional market symbol filter" }
+            },
+            "additionalProperties": false
+        }),
+        command: "vulcan paper triggers",
+        example: "vulcan paper triggers SOL -o json",
         auth_required: false,
     },
 

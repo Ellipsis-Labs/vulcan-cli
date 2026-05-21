@@ -130,3 +130,64 @@ Conditional trigger legs may also appear in portfolio or order views as reduce-o
 1. **Wrong direction**: TP must be on the profitable side. For longs, TP > entry. For shorts, TP < entry.
 2. **Setting on a reduce order**: TP/SL fails if the order reduces a position. Use `vulcan_trade_set_tpsl` on the existing position instead.
 3. **Treating trigger legs as normal limits**: If conditional TP/SL legs appear in order views, they are reduce-only trigger orders. Check `vulcan_position_show` for the position-level TP/SL state.
+
+## Paper Mode
+
+Paper mode supports the same TP/SL surface as live, so agents can rehearse the full flow without spending gas or risking funds. Tool names and CLI commands are parallel — swap `vulcan_trade_*` for `vulcan_paper_*` and `vulcan trade ...` for `vulcan paper ...`.
+
+### Order-time TP/SL
+
+```
+vulcan_paper_trade → {
+  symbol: "SOL", side: "buy", order_type: "market",
+  tokens: 1, tp: 160.0, sl: 140.0
+}
+```
+
+Same constraint as live: order-time TP/SL only works when the order opens or extends a position. If it would reduce/flip an existing position, the request errors with `TPSL_ORDER_REDUCES`. CLI: `vulcan paper buy SOL --tokens 1 --tp 160 --sl 140`.
+
+For a non-crossing limit order, the attached triggers are stored as **pending** (parent_order_id = the resting limit). When the limit fills (via `paper reconcile`), they re-parent to the position and become active. If the limit is cancelled before fill, its pending triggers cascade-cancel.
+
+### Setting TP/SL on an existing paper position
+
+```
+vulcan_paper_set_tpsl → { symbol: "SOL", tp: 160.0, sl: 140.0 }
+```
+
+Multi-level laddered exits use the same `tp_levels` / `sl_levels` schema as live:
+
+```
+vulcan_paper_set_tpsl → {
+  symbol: "SOL",
+  tp_levels: [{ price: 160.0, size: 0.5 }, { price: 170.0, size: 0.5 }],
+  sl_levels: [{ price: 140.0 }]
+}
+```
+
+CLI: `vulcan paper set-tpsl SOL --tp-level 160:0.5 --tp-level 170:0.5 --sl-level 140`.
+
+Paper does NOT require `acknowledged: true` or `--yes` (no real funds at stake).
+
+### Cancelling and listing
+
+```
+vulcan_paper_cancel_tpsl → { symbol: "SOL", tp: true, sl: true }
+vulcan_paper_triggers    → { symbol: "SOL" }   # symbol is optional
+```
+
+`vulcan_paper_cancel` also accepts a trigger ID directly (in addition to an order ID).
+
+### When triggers fire in paper
+
+Live keepers fire triggers automatically when the mark crosses. Paper has no keeper — triggers are evaluated only when paper sees fresh market data:
+
+- After a `vulcan_paper_trade` (the post-fill mark refresh evaluates triggers).
+- After `vulcan_paper_reconcile` (refreshes marks per symbol then evaluates).
+
+`vulcan_paper_status`, `vulcan_paper_positions`, and `vulcan_paper_triggers` are **read-only** and do not fire triggers. To force evaluation against current marks, call `vulcan_paper_reconcile` (optionally with a `symbol` filter).
+
+### Viewing TP/SL in paper
+
+`vulcan_paper_positions` projects active TP/SL onto each position as `tp_levels` and `sl_levels` (mirroring the live `vulcan_position_show` shape), so agents can read TP/SL state from the position payload directly. The dedicated `vulcan_paper_triggers` tool surfaces both active triggers and pending-on-resting-limit ones for the full picture.
+
+Fills produced by triggers appear in `vulcan_paper_fills` with the trigger ID in `order_id` so they're easy to attribute.
