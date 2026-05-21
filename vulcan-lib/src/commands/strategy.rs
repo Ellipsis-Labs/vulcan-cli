@@ -485,6 +485,12 @@ pub fn monitor(
     })
 }
 
+/// Hard cap on a single `wait_next_tick` invocation. Anything longer makes the
+/// MCP call indistinguishable from a hang and skips the heartbeat contract in
+/// CONTEXT.md § Strategy Monitoring. Slow-cadence runs must return early so the
+/// agent can emit a heartbeat or hand control back to the user.
+const MAX_WAIT_NEXT_TICK_SECONDS: u64 = 300;
+
 pub async fn wait_next_tick(
     ctx: &AppContext,
     run_id: &str,
@@ -496,6 +502,7 @@ pub async fn wait_next_tick(
     // tick 1 if the detached runner raced ahead of the agent's first call.
     // Callers that want "from-now" semantics must pass after_tick explicitly.
     let observed_tick = after_tick.unwrap_or(0);
+    let timeout_seconds = timeout_seconds.min(MAX_WAIT_NEXT_TICK_SECONDS);
     let deadline = std::time::Instant::now()
         .checked_add(std::time::Duration::from_secs(timeout_seconds))
         .unwrap_or_else(std::time::Instant::now);

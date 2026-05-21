@@ -887,7 +887,7 @@ pub static TOOLS: &[ToolDef] = &[
             "properties": {
                 "run_id": { "type": "string" },
                 "after_tick": { "type": "integer", "description": "Return once a tick newer than this index exists. Omit on the first poll after a detached start to receive every tick already emitted (including ticks that landed before the call). For subsequent polls, pass the last tick index you have already narrated." },
-                "timeout_seconds": { "type": "integer", "description": "Maximum seconds to wait before returning current status with timed_out=true", "default": 90 },
+                "timeout_seconds": { "type": "integer", "description": "Maximum seconds to wait before returning current status with timed_out=true. Server caps this at 300; longer values are silently clamped so the heartbeat contract holds on slow-cadence runs.", "default": 90, "minimum": 1, "maximum": 300 },
                 "include_ledger": { "type": "boolean", "description": "Include the full persisted ledger; defaults to false to reduce context", "default": false }
             },
             "required": ["run_id"],
