@@ -121,7 +121,7 @@
       "name": "vulcan_trade",
       "command": "vulcan trade <market-buy|market-sell|limit-buy|limit-sell>",
       "group": "trade",
-      "description": "Place a market or limit order. `side` is buy|sell. `order_type` is market|limit. Market orders take exactly one of `size` (base lots), `tokens` (base asset), or `notional_usdc` (USDC). Limit orders require `size` (base lots) and `price`.",
+      "description": "Place a market or limit order. Specify size via EXACTLY ONE of `size` (BASE LOTS — the exchange's atomic units, NOT tokens; misreading this is the #1 cause of mis-sized orders), `tokens` (base-asset amount, e.g. 0.5 SOL), or `notional_usdc` (USDC value, e.g. 100). `tokens` and `notional_usdc` work for BOTH market and limit orders — prefer them whenever you are thinking in token or USDC terms. For lot conversion: 1 token = 10^base_lots_decimals lots (see vulcan_market_info).",
       "auth_required": true,
       "dangerous": true,
       "parameters": [
@@ -147,19 +147,19 @@
           "name": "size",
           "type": "number",
           "required": false,
-          "description": "Size in base lots. Required for limit; one of size/tokens/notional_usdc for market."
+          "description": "Size in BASE LOTS (exchange atomic units, NOT tokens). For a market with base_lots_decimals=2, 1 token = 100 lots. Prefer `tokens` or `notional_usdc` to avoid lot-vs-token confusion. Exactly one of size/tokens/notional_usdc is required."
         },
         {
           "name": "tokens",
           "type": "number",
           "required": false,
-          "description": "Size in tokens of the base asset (market only)"
+          "description": "Size in base-asset tokens (e.g. 0.5 SOL). Works for both market and limit orders."
         },
         {
           "name": "notional_usdc",
           "type": "number",
           "required": false,
-          "description": "Size as USDC notional, quoted at mid (market only). Actual fill may differ by spread + impact."
+          "description": "Size as USDC notional. For market orders, quoted at mid mark; for limit orders, divided by the limit `price` to derive tokens. Actual fill may differ from quote by spread + impact."
         },
         {
           "name": "price",
@@ -210,7 +210,7 @@
       "name": "vulcan_trade_multi_limit",
       "command": "MCP only: vulcan_trade_multi_limit",
       "group": "trade",
-      "description": "Place multiple limit orders (bids and asks) in a single transaction. Much faster than placing orders individually. Orders are post-only.",
+      "description": "Place multiple post-only limit orders (bids and asks) in a single transaction. Optional per-leg `tp` and `sl` arm a take-profit / stop-loss bracket on that leg's resulting position size; when any leg carries tp/sl the submission switches to per-leg limit-order instructions bundled in one tx (slide is ignored on that path). Sizes are BASE LOTS (NOT tokens) — see vulcan_market_info for the lot-to-token conversion.",
       "auth_required": true,
       "dangerous": true,
       "parameters": [
@@ -224,20 +224,20 @@
           "name": "bids",
           "type": "object[]",
           "required": true,
-          "description": "Array of bid orders, each with price (USD) and size (base lots)"
+          "description": "Array of bid orders. `size` is BASE LOTS (NOT tokens). Optional per-leg tp/sl prices."
         },
         {
           "name": "asks",
           "type": "object[]",
           "required": true,
-          "description": "Array of ask orders, each with price (USD) and size (base lots)"
+          "description": "Array of ask orders. `size` is BASE LOTS (NOT tokens). Optional per-leg tp/sl prices."
         },
         {
           "name": "slide",
           "type": "boolean",
           "required": false,
           "default": false,
-          "description": "Whether orders should slide to top of book if they would cross. Default false."
+          "description": "Whether orders should slide to top of book if they would cross. Default false. Ignored when any leg has tp/sl."
         },
         {
           "name": "acknowledged",
@@ -246,7 +246,7 @@
           "description": "Must be true to confirm this dangerous operation"
         }
       ],
-      "example": "vulcan_trade_multi_limit → { \"symbol\": \"SOL\", \"bids\": [{ \"price\": 140, \"size\": 25 }], \"asks\": [{ \"price\": 160, \"size\": 25 }], \"acknowledged\": true }"
+      "example": "vulcan_trade_multi_limit → { \"symbol\": \"SOL\", \"bids\": [{ \"price\": 140, \"size\": 25, \"tp\": 150, \"sl\": 135 }], \"asks\": [], \"acknowledged\": true }"
     },
     {
       "name": "vulcan_trade_orders",

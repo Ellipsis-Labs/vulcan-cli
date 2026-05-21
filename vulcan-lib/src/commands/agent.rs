@@ -57,6 +57,10 @@ const SKILLS: &[SkillSpec] = &[
         contents: include_str!("../../../skills/vulcan-grid-trading/SKILL.md"),
     },
     SkillSpec {
+        name: "vulcan-scale-orders",
+        contents: include_str!("../../../skills/vulcan-scale-orders/SKILL.md"),
+    },
+    SkillSpec {
         name: "vulcan-market-intel",
         contents: include_str!("../../../skills/vulcan-market-intel/SKILL.md"),
     },

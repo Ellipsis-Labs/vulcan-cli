@@ -65,11 +65,27 @@ impl TableRenderable for OrderResult {
     }
 }
 
+/// Single leg of a multi-limit order. Each leg may carry its own optional
+/// per-leg take-profit / stop-loss; when set, the multi-limit submission falls
+/// back to building N individual limit-order instructions (each with its own
+/// bracket) bundled into one transaction.
+#[derive(Debug, Clone)]
+pub struct MultiLimitLeg {
+    pub price: f64,
+    pub size_lots: u64,
+    pub tp: Option<f64>,
+    pub sl: Option<f64>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct MultiLimitOrderEntry {
     pub side: String,
     pub price: f64,
     pub size: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tp: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sl: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -79,6 +95,9 @@ pub struct MultiLimitOrderResult {
     pub bids: Vec<MultiLimitOrderEntry>,
     pub asks: Vec<MultiLimitOrderEntry>,
     pub slide: bool,
+    /// True when any leg carried tp/sl and the submission expanded to per-leg
+    /// limit-order instructions instead of the single multi-limit instruction.
+    pub per_leg_brackets: bool,
     pub dry_run: bool,
     pub tx_signature: Option<String>,
     pub num_instructions: usize,
@@ -94,13 +113,30 @@ impl TableRenderable for MultiLimitOrderResult {
         println!("  Symbol: {}", self.symbol);
         println!("  Bids: {}", self.bids.len());
         for b in &self.bids {
-            println!("    ${:.4} × {} lots", b.price, b.size);
+            print!("    ${:.4} × {} lots", b.price, b.size);
+            if let Some(tp) = b.tp {
+                print!("  tp=${:.4}", tp);
+            }
+            if let Some(sl) = b.sl {
+                print!("  sl=${:.4}", sl);
+            }
+            println!();
         }
         println!("  Asks: {}", self.asks.len());
         for a in &self.asks {
-            println!("    ${:.4} × {} lots", a.price, a.size);
+            print!("    ${:.4} × {} lots", a.price, a.size);
+            if let Some(tp) = a.tp {
+                print!("  tp=${:.4}", tp);
+            }
+            if let Some(sl) = a.sl {
+                print!("  sl=${:.4}", sl);
+            }
+            println!();
         }
         println!("  Slide: {}", self.slide);
+        if self.per_leg_brackets {
+            println!("  Per-leg brackets: yes");
+        }
         println!("  Instructions: {}", self.num_instructions);
         if let Some(sig) = &self.tx_signature {
             println!("  Tx: {}", sig);
@@ -493,11 +529,30 @@ pub fn sized_bracket_leg_orders(
     })
 }
 
-/// Build, optionally sign, and submit a transaction.
+/// Default compute-unit budget for a single Phoenix tx. Sized for a typical
+/// place/cancel/position ix plus the activate-trader overhead.
+pub const DEFAULT_CU_LIMIT: u32 = 400_000;
+
+/// Solana's hard cap on per-tx requested compute units.
+pub const MAX_CU_LIMIT: u32 = 1_400_000;
+
+/// Build, optionally sign, and submit a transaction with the default CU budget.
 pub async fn send_or_dry_run(
     ctx: &AppContext,
     ixs: Vec<solana_sdk::instruction::Instruction>,
     wallet: &crate::wallet::Wallet,
+) -> Result<Option<String>, VulcanError> {
+    send_or_dry_run_with_cu_limit(ctx, ixs, wallet, DEFAULT_CU_LIMIT).await
+}
+
+/// Build, optionally sign, and submit a transaction with a caller-supplied CU
+/// budget. Used by bundles that exceed the default (e.g. multi-leg
+/// `place_limit_order_with_conditionals`, where each leg consumes ~145k CUs).
+pub async fn send_or_dry_run_with_cu_limit(
+    ctx: &AppContext,
+    ixs: Vec<solana_sdk::instruction::Instruction>,
+    wallet: &crate::wallet::Wallet,
+    cu_limit: u32,
 ) -> Result<Option<String>, VulcanError> {
     if ctx.dry_run {
         return Ok(None);
@@ -513,11 +568,10 @@ pub async fn send_or_dry_run(
         .get_latest_blockhash()
         .map_err(|e| VulcanError::network("BLOCKHASH_FAILED", e.to_string()))?;
 
-    // Prepend a compute budget instruction to avoid CU exhaustion on complex
-    // transactions (e.g. opening a new position with many existing positions).
+    let cu_limit = cu_limit.min(MAX_CU_LIMIT);
     let mut all_ixs = Vec::with_capacity(ixs.len() + 1);
     all_ixs.push(
-        solana_sdk::compute_budget::ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+        solana_sdk::compute_budget::ComputeBudgetInstruction::set_compute_unit_limit(cu_limit),
     );
     all_ixs.extend(ixs);
 
@@ -773,6 +827,52 @@ pub async fn resolve_base_lots(
             Ok(ResolvedSize {
                 base_lots: lots,
                 quoted_mark: Some(mark),
+            })
+        }
+    }
+}
+
+/// Resolve a SizeSpec into base lots using the supplied limit price for the
+/// `Notional` branch. Unlike `resolve_base_lots`, this never fetches a mark
+/// price — the caller's limit price is authoritative for the limit order it is
+/// about to place, which is also the price the user expects their notional to
+/// be denominated against.
+pub async fn resolve_base_lots_with_limit_price(
+    ctx: &AppContext,
+    symbol: &str,
+    spec: SizeSpec,
+    limit_price: f64,
+) -> Result<ResolvedSize, VulcanError> {
+    match spec {
+        SizeSpec::Lots(n) => Ok(ResolvedSize {
+            base_lots: n,
+            quoted_mark: None,
+        }),
+        SizeSpec::Tokens(n) => {
+            let lots = tokens_to_base_lots(ctx, symbol, n).await?;
+            Ok(ResolvedSize {
+                base_lots: lots,
+                quoted_mark: None,
+            })
+        }
+        SizeSpec::Notional(notional) => {
+            if notional <= 0.0 {
+                return Err(VulcanError::validation(
+                    "SIZE_TOO_SMALL",
+                    "notional_usdc must be positive.",
+                ));
+            }
+            if limit_price <= 0.0 {
+                return Err(VulcanError::validation(
+                    "INVALID_PRICE",
+                    "limit price must be positive.",
+                ));
+            }
+            let tokens = notional / limit_price;
+            let lots = tokens_to_base_lots(ctx, symbol, tokens).await?;
+            Ok(ResolvedSize {
+                base_lots: lots,
+                quoted_mark: Some(limit_price),
             })
         }
     }
@@ -1225,8 +1325,8 @@ pub async fn execute_limit_order_inner(
 pub async fn execute_multi_limit_order_inner(
     ctx: &AppContext,
     symbol: &str,
-    bids: Vec<(f64, u64)>,
-    asks: Vec<(f64, u64)>,
+    bids: Vec<MultiLimitLeg>,
+    asks: Vec<MultiLimitLeg>,
     slide: bool,
 ) -> Result<MultiLimitOrderResult, VulcanError> {
     let (wallet, authority, trader_pda) = resolve_wallet_and_pda(ctx, None)?;
@@ -1243,28 +1343,92 @@ pub async fn execute_multi_limit_order_inner(
         ));
     }
 
-    let ixs = builder
-        .build_multi_limit_order(authority, trader_pda, symbol, &bids, &asks, slide)
-        .map_err(|e| VulcanError::api("BUILD_MULTI_ORDER_FAILED", e.to_string()))?;
+    let any_bracket = bids
+        .iter()
+        .chain(asks.iter())
+        .any(|leg| leg.tp.is_some() || leg.sl.is_some());
+
+    let ixs = if any_bracket {
+        // Per-leg bracket path: Phoenix's multi_limit instruction does not
+        // accept conditional orders, so when any leg has tp/sl we expand to N
+        // individual `place_limit_order_with_conditionals` ixs bundled into a
+        // single transaction. `slide` is ignored on this path (the per-leg
+        // limit ix is post-only by default and Phoenix's limit builder does
+        // not expose a slide option).
+        let rpc_client = Arc::new(ctx.rpc_client_async());
+        let mut all_ixs: Vec<solana_sdk::instruction::Instruction> = Vec::new();
+        for (legs, side) in [(&bids, Side::Bid), (&asks, Side::Ask)] {
+            for leg in legs.iter() {
+                let mut ticket_builder = phoenix_rise::LimitOrderTicket::builder()
+                    .authority(authority)
+                    .trader_account(trader_pda)
+                    .symbol(symbol)
+                    .side(side)
+                    .price(leg.price)
+                    .num_base_lots(leg.size_lots);
+
+                if let Some(bracket) = bracket_leg_orders(leg.tp, leg.sl) {
+                    ticket_builder = ticket_builder.bracket_leg_ticket(
+                        phoenix_rise::BracketLegTicket::new(rpc_client.clone(), bracket),
+                    );
+                }
+
+                let ticket = ticket_builder
+                    .build()
+                    .map_err(|e| VulcanError::api("BUILD_ORDER_FAILED", e.to_string()))?;
+
+                let leg_ixs = builder
+                    .place_limit_order(ticket)
+                    .await
+                    .map_err(|e| VulcanError::api("BUILD_ORDER_FAILED", e.to_string()))?;
+                all_ixs.extend(leg_ixs);
+            }
+        }
+        all_ixs
+    } else {
+        let bid_tuples: Vec<(f64, u64)> = bids.iter().map(|l| (l.price, l.size_lots)).collect();
+        let ask_tuples: Vec<(f64, u64)> = asks.iter().map(|l| (l.price, l.size_lots)).collect();
+        builder
+            .build_multi_limit_order(
+                authority,
+                trader_pda,
+                symbol,
+                &bid_tuples,
+                &ask_tuples,
+                slide,
+            )
+            .map_err(|e| VulcanError::api("BUILD_MULTI_ORDER_FAILED", e.to_string()))?
+    };
 
     let num_ixs = ixs.len();
-    let sig = send_or_dry_run(ctx, ixs, &wallet).await?;
+    let sig = if any_bracket {
+        // Each place_limit_order_with_conditionals ix burns ~145k CUs; size the
+        // tx budget so all N legs fit (capped at Solana's 1.4M per-tx max).
+        let cu_limit = ((num_ixs as u32).saturating_mul(175_000)).saturating_add(100_000);
+        send_or_dry_run_with_cu_limit(ctx, ixs, &wallet, cu_limit).await?
+    } else {
+        send_or_dry_run(ctx, ixs, &wallet).await?
+    };
 
     let bid_entries: Vec<MultiLimitOrderEntry> = bids
         .iter()
-        .map(|(price, size)| MultiLimitOrderEntry {
+        .map(|l| MultiLimitOrderEntry {
             side: "buy".to_string(),
-            price: *price,
-            size: *size,
+            price: l.price,
+            size: l.size_lots,
+            tp: l.tp,
+            sl: l.sl,
         })
         .collect();
 
     let ask_entries: Vec<MultiLimitOrderEntry> = asks
         .iter()
-        .map(|(price, size)| MultiLimitOrderEntry {
+        .map(|l| MultiLimitOrderEntry {
             side: "sell".to_string(),
-            price: *price,
-            size: *size,
+            price: l.price,
+            size: l.size_lots,
+            tp: l.tp,
+            sl: l.sl,
         })
         .collect();
 
@@ -1274,6 +1438,7 @@ pub async fn execute_multi_limit_order_inner(
         bids: bid_entries,
         asks: ask_entries,
         slide,
+        per_leg_brackets: any_bracket,
         dry_run: ctx.dry_run,
         tx_signature: sig,
         num_instructions: num_ixs,

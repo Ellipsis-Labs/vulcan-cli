@@ -109,7 +109,7 @@ pub static TOOLS: &[ToolDef] = &[
     // ── Trade (dangerous) ───────────────────────────────────────────────
     ToolDef {
         name: "vulcan_trade",
-        description: "Place a market or limit order. `side` is buy|sell. `order_type` is market|limit. Market orders take exactly one of `size` (base lots), `tokens` (base asset), or `notional_usdc` (USDC). Limit orders require `size` (base lots) and `price`.",
+        description: "Place a market or limit order. Specify size via EXACTLY ONE of `size` (BASE LOTS — the exchange's atomic units, NOT tokens; misreading this is the #1 cause of mis-sized orders), `tokens` (base-asset amount, e.g. 0.5 SOL), or `notional_usdc` (USDC value, e.g. 100). `tokens` and `notional_usdc` work for BOTH market and limit orders — prefer them whenever you are thinking in token or USDC terms. For lot conversion: 1 token = 10^base_lots_decimals lots (see vulcan_market_info).",
         group: "trade",
         dangerous: true,
         schema: || json!({
@@ -118,9 +118,9 @@ pub static TOOLS: &[ToolDef] = &[
                 "symbol": { "type": "string", "description": "Market symbol, e.g. SOL" },
                 "side": { "type": "string", "enum": ["buy", "sell"], "description": "Order side" },
                 "order_type": { "type": "string", "enum": ["market", "limit"], "description": "Order type. Market executes immediately, limit rests on the book." },
-                "size": { "type": "number", "description": "Size in base lots. Required for limit; one of size/tokens/notional_usdc for market." },
-                "tokens": { "type": "number", "description": "Size in tokens of the base asset (market only)" },
-                "notional_usdc": { "type": "number", "description": "Size as USDC notional, quoted at mid (market only). Actual fill may differ by spread + impact." },
+                "size": { "type": "number", "description": "Size in BASE LOTS (exchange atomic units, NOT tokens). For a market with base_lots_decimals=2, 1 token = 100 lots. Prefer `tokens` or `notional_usdc` to avoid lot-vs-token confusion. Exactly one of size/tokens/notional_usdc is required." },
+                "tokens": { "type": "number", "description": "Size in base-asset tokens (e.g. 0.5 SOL). Works for both market and limit orders." },
+                "notional_usdc": { "type": "number", "description": "Size as USDC notional. For market orders, quoted at mid mark; for limit orders, divided by the limit `price` to derive tokens. Actual fill may differ from quote by spread + impact." },
                 "price": { "type": "number", "description": "Limit price in USD (required for order_type=limit)" },
                 "tp": { "type": "number", "description": "Optional take-profit price" },
                 "sl": { "type": "number", "description": "Optional stop-loss price" },
@@ -138,7 +138,7 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "vulcan_trade_multi_limit",
-        description: "Place multiple limit orders (bids and asks) in a single transaction. Much faster than placing orders individually. Orders are post-only.",
+        description: "Place multiple post-only limit orders (bids and asks) in a single transaction. Optional per-leg `tp` and `sl` arm a take-profit / stop-loss bracket on that leg's resulting position size; when any leg carries tp/sl the submission switches to per-leg limit-order instructions bundled in one tx (slide is ignored on that path). Sizes are BASE LOTS (NOT tokens) — see vulcan_market_info for the lot-to-token conversion.",
         group: "trade",
         dangerous: true,
         schema: || json!({
@@ -147,36 +147,40 @@ pub static TOOLS: &[ToolDef] = &[
                 "symbol": { "type": "string", "description": "Market symbol, e.g. SOL" },
                 "bids": {
                     "type": "array",
-                    "description": "Array of bid orders, each with price (USD) and size (base lots)",
+                    "description": "Array of bid orders. `size` is BASE LOTS (NOT tokens). Optional per-leg tp/sl prices.",
                     "items": {
                         "type": "object",
                         "properties": {
                             "price": { "type": "number", "description": "Limit price in USD" },
-                            "size": { "type": "integer", "description": "Order size in base lots" }
+                            "size": { "type": "integer", "description": "Order size in BASE LOTS (NOT tokens; 1 token = 10^base_lots_decimals lots)" },
+                            "tp": { "type": "number", "description": "Optional take-profit price for this leg" },
+                            "sl": { "type": "number", "description": "Optional stop-loss price for this leg" }
                         },
                         "required": ["price", "size"]
                     }
                 },
                 "asks": {
                     "type": "array",
-                    "description": "Array of ask orders, each with price (USD) and size (base lots)",
+                    "description": "Array of ask orders. `size` is BASE LOTS (NOT tokens). Optional per-leg tp/sl prices.",
                     "items": {
                         "type": "object",
                         "properties": {
                             "price": { "type": "number", "description": "Limit price in USD" },
-                            "size": { "type": "integer", "description": "Order size in base lots" }
+                            "size": { "type": "integer", "description": "Order size in BASE LOTS (NOT tokens; 1 token = 10^base_lots_decimals lots)" },
+                            "tp": { "type": "number", "description": "Optional take-profit price for this leg" },
+                            "sl": { "type": "number", "description": "Optional stop-loss price for this leg" }
                         },
                         "required": ["price", "size"]
                     }
                 },
-                "slide": { "type": "boolean", "description": "Whether orders should slide to top of book if they would cross. Default false.", "default": false },
+                "slide": { "type": "boolean", "description": "Whether orders should slide to top of book if they would cross. Default false. Ignored when any leg has tp/sl.", "default": false },
                 "acknowledged": { "type": "boolean", "description": "Must be true to confirm this dangerous operation" }
             },
             "required": ["symbol", "bids", "asks", "acknowledged"],
             "additionalProperties": false
         }),
         command: "MCP only: vulcan_trade_multi_limit",
-        example: "vulcan_trade_multi_limit → { \"symbol\": \"SOL\", \"bids\": [{ \"price\": 140, \"size\": 25 }], \"asks\": [{ \"price\": 160, \"size\": 25 }], \"acknowledged\": true }",
+        example: "vulcan_trade_multi_limit → { \"symbol\": \"SOL\", \"bids\": [{ \"price\": 140, \"size\": 25, \"tp\": 150, \"sl\": 135 }], \"asks\": [], \"acknowledged\": true }",
         auth_required: true,
     },
     ToolDef {

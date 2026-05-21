@@ -1011,13 +1011,23 @@ async fn place_initial_grid(
                     .levels
                     .iter()
                     .filter(|level| level.entry_side == StrategySide::Buy)
-                    .map(|level| (level.entry_price, level.size_lots))
+                    .map(|level| trade::MultiLimitLeg {
+                        price: level.entry_price,
+                        size_lots: level.size_lots,
+                        tp: None,
+                        sl: None,
+                    })
                     .collect::<Vec<_>>();
                 let asks = config
                     .levels
                     .iter()
                     .filter(|level| level.entry_side == StrategySide::Sell)
-                    .map(|level| (level.entry_price, level.size_lots))
+                    .map(|level| trade::MultiLimitLeg {
+                        price: level.entry_price,
+                        size_lots: level.size_lots,
+                        tp: None,
+                        sl: None,
+                    })
                     .collect::<Vec<_>>();
                 let result = trade::execute_multi_limit_order_inner(
                     ctx,
@@ -1905,12 +1915,22 @@ async fn place_live_replacements(
         let bids = replacements
             .iter()
             .filter(|level| level.entry_side == StrategySide::Buy)
-            .map(|level| (level.entry_price, level.size_lots))
+            .map(|level| trade::MultiLimitLeg {
+                price: level.entry_price,
+                size_lots: level.size_lots,
+                tp: None,
+                sl: None,
+            })
             .collect::<Vec<_>>();
         let asks = replacements
             .iter()
             .filter(|level| level.entry_side == StrategySide::Sell)
-            .map(|level| (level.entry_price, level.size_lots))
+            .map(|level| trade::MultiLimitLeg {
+                price: level.entry_price,
+                size_lots: level.size_lots,
+                tp: None,
+                sl: None,
+            })
             .collect::<Vec<_>>();
         let result =
             trade::execute_multi_limit_order_inner(ctx, &config.symbol, bids, asks, config.slide)

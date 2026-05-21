@@ -789,12 +789,20 @@ impl VulcanMcpServer {
                 Ok(serde_json::to_value(result).unwrap())
             }
             "limit" => {
-                let size = arg_f64(args, "size")?;
                 let price = arg_f64(args, "price")?;
-                let result = commands::trade::execute_limit_order_inner(
+                let spec = commands::trade::size_spec_from_inputs(
+                    arg_f64_opt(args, "size"),
+                    arg_f64_opt(args, "tokens"),
+                    arg_f64_opt(args, "notional_usdc"),
+                )?;
+                let resolved = commands::trade::resolve_base_lots_with_limit_price(
+                    &self.ctx, &symbol, spec, price,
+                )
+                .await?;
+                let mut result = commands::trade::execute_limit_order_inner(
                     &self.ctx,
                     &symbol,
-                    size,
+                    resolved.base_lots,
                     price,
                     side,
                     tp,
@@ -804,6 +812,7 @@ impl VulcanMcpServer {
                     reduce_only,
                 )
                 .await?;
+                result.quoted_mark = resolved.quoted_mark;
                 Ok(serde_json::to_value(result).unwrap())
             }
             other => Err(crate::error::VulcanError::validation(
@@ -966,6 +975,11 @@ static RESOURCES: &[(&str, &str, &str)] = &[
         "vulcan://skills/vulcan-grid-trading",
         "Grid trading with layered limit orders across a price range",
         include_str!("../../../skills/vulcan-grid-trading/SKILL.md"),
+    ),
+    (
+        "vulcan://skills/vulcan-scale-orders",
+        "Scale (laddered) limit entries via multi-limit, post-fill TP/SL, and TA-suggested levels",
+        include_str!("../../../skills/vulcan-scale-orders/SKILL.md"),
     ),
     (
         "vulcan://skills/vulcan-ta-strategy",
@@ -1556,17 +1570,27 @@ fn arg_u32(args: &Value, key: &str) -> Result<u32, crate::error::VulcanError> {
         })
 }
 
-fn arg_order_array(args: &Value, key: &str) -> Result<Vec<(f64, u64)>, crate::error::VulcanError> {
+fn arg_order_array(
+    args: &Value,
+    key: &str,
+) -> Result<Vec<commands::trade::MultiLimitLeg>, crate::error::VulcanError> {
     args.get(key)
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
                 .filter_map(|entry| {
                     let price = entry.get("price").and_then(|v| v.as_f64())?;
-                    let size = entry
+                    let size_lots = entry
                         .get("size")
                         .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)))?;
-                    Some((price, size))
+                    let tp = entry.get("tp").and_then(|v| v.as_f64());
+                    let sl = entry.get("sl").and_then(|v| v.as_f64());
+                    Some(commands::trade::MultiLimitLeg {
+                        price,
+                        size_lots,
+                        tp,
+                        sl,
+                    })
                 })
                 .collect()
         })
@@ -1574,7 +1598,7 @@ fn arg_order_array(args: &Value, key: &str) -> Result<Vec<(f64, u64)>, crate::er
             crate::error::VulcanError::validation(
                 "MISSING_ARG",
                 format!(
-                    "Required argument '{}' is missing or not an array of {{price, size}} objects",
+                    "Required argument '{}' is missing or not an array of {{price, size, tp?, sl?}} objects",
                     key
                 ),
             )

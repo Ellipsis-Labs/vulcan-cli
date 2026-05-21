@@ -1,6 +1,6 @@
 # Skills Index
 
-17 agent skills for `vulcan`, organized by category.
+18 agent skills for `vulcan`, organized by category.
 
 ## Context Loading Model
 
@@ -46,6 +46,7 @@ Order execution, lot size calculation, TP/SL management, and execution strategie
 | [vulcan-tpsl-management](./vulcan-tpsl-management/SKILL.md)         | Take-profit and stop-loss: direction rules, constraints, set/cancel flows. |
 | [vulcan-twap-execution](./vulcan-twap-execution/SKILL.md)           | Execute large orders as time-weighted slices to reduce market impact.      |
 | [vulcan-grid-trading](./vulcan-grid-trading/SKILL.md)               | Grid trading with layered limit orders across a price range.               |
+| [vulcan-scale-orders](./vulcan-scale-orders/SKILL.md)               | Scale (laddered) limit entries via multi-limit; post-fill laddered TP/SL; TA-suggested levels when none provided. |
 | [vulcan-ta-strategy](./vulcan-ta-strategy/SKILL.md)                 | TA-driven strategy runner: declarative rules (Condition → Action) for EMA cross, RSI mean-reversion, MACD trend-follow, multi-confirmation entries. |
 
 

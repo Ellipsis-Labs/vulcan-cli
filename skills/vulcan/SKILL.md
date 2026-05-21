@@ -57,6 +57,7 @@ Before any `--mode confirm_each` or `--mode auto_execute` strategy/trade launch,
 - Deposits, withdrawals, transfers, isolated collateral, or leverage tiers: `vulcan-margin-operations`.
 - TWAP: `vulcan-twap-execution`.
 - Grid trading: `vulcan-grid-trading`.
+- Scale (laddered) limit entries with optional TA-suggested levels and post-fill laddered TP/SL: `vulcan-scale-orders`.
 
 ## If Unsure
 
