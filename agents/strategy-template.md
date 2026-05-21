@@ -12,7 +12,7 @@ Use this template when adding a Vulcan-owned strategy such as grid, TA, or volat
 6. **Tick emission**: after every executed or terminal step, call `strategy::runner::emit_strategy_tick`. Do not write ticks directly. The shared emitter appends JSONL ticks, records agent action log events, prints table output through the strategy renderer, and prints JSON-mode diagnostics to stderr.
 7. **Persistence**: write ledger updates after every status change and write a summary report at pause/completion.
 8. **Resume**: load the ledger, verify wallet/config match, skip completed steps, and continue from the next incomplete step.
-9. **Agent contract**: expose an MCP tool schema, update `agents/tool-catalog.json`, and document mode support, safety policy, tick/report fields, terminal statuses, and pause/stop controls.
+9. **Agent contract**: expose an MCP tool schema via `vulcan-lib/src/mcp/registry.rs` (including `command`, `example`, `auth_required`), then regenerate the machine-readable catalog with `cargo run -p vulcan --bin gen_tool_catalog > agents/tool-catalog.json`. Document mode support, safety policy, tick/report fields, terminal statuses, and pause/stop controls.
 
 ## Agent Monitoring Contract
 

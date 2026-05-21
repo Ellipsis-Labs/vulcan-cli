@@ -40,7 +40,7 @@ cargo test
 
 - Keep command return types as `Result<(), VulcanError>`; do not introduce `anyhow` in command boundaries.
 - JSON output uses the envelope `{ "ok": true, "data": ..., "meta": ... }` or `{ "ok": false, "error": { "category", "code", "message", "retryable" } }`.
-- Machine-readable tool schemas belong in `agents/tool-catalog.json`.
+- `agents/tool-catalog.json` is generated from `vulcan-lib/src/mcp/registry.rs`. Do not edit it by hand. After changing a `ToolDef` (description, schema, command, example, auth_required), regenerate it with `cargo run -p vulcan --bin gen_tool_catalog > agents/tool-catalog.json`. A unit test fails CI if the checked-in file drifts from the generator output.
 - Error categories, codes, and recovery hints belong in `agents/error-catalog.json`.
 - Always update `CONTEXT.md` when changing universal agent runtime behavior.
 - Update focused `skills/*/SKILL.md` files when changing task-specific workflows.

@@ -8,6 +8,13 @@ pub struct ToolDef {
     pub group: &'static str,
     pub dangerous: bool,
     pub schema: fn() -> Value,
+    /// CLI command form (e.g. "vulcan market list"). Used by the catalog
+    /// generator and surfaced as the `command` field in agents/tool-catalog.json.
+    pub command: &'static str,
+    /// Single-line CLI usage example. Surfaced as the `example` field.
+    pub example: &'static str,
+    /// True when the tool requires Phoenix API auth (a logged-in session).
+    pub auth_required: bool,
 }
 
 /// All tools exposed by the Vulcan MCP server.
@@ -23,6 +30,9 @@ pub static TOOLS: &[ToolDef] = &[
             "properties": {},
             "additionalProperties": false
         }),
+        command: "vulcan market list",
+        example: "vulcan market list -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_market_ticker",
@@ -37,6 +47,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["symbol"],
             "additionalProperties": false
         }),
+        command: "vulcan market ticker",
+        example: "vulcan market ticker SOL -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_market_info",
@@ -51,6 +64,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["symbol"],
             "additionalProperties": false
         }),
+        command: "vulcan market info",
+        example: "vulcan market info SOL -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_market_orderbook",
@@ -66,6 +82,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["symbol"],
             "additionalProperties": false
         }),
+        command: "vulcan market orderbook",
+        example: "vulcan market orderbook SOL --depth 10 -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_market_candles",
@@ -82,6 +101,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["symbol"],
             "additionalProperties": false
         }),
+        command: "vulcan market candles",
+        example: "vulcan market candles SOL --interval 1h --limit 50 --with-indicators rsi,macd -o json",
+        auth_required: false,
     },
 
     // ── Trade (dangerous) ───────────────────────────────────────────────
@@ -110,6 +132,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["symbol", "side", "order_type", "acknowledged"],
             "additionalProperties": false
         }),
+        command: "vulcan trade <market-buy|market-sell|limit-buy|limit-sell>",
+        example: "vulcan trade market-buy SOL --notional-usdc 100 --yes -o json",
+        auth_required: true,
     },
     ToolDef {
         name: "vulcan_trade_multi_limit",
@@ -150,6 +175,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["symbol", "bids", "asks", "acknowledged"],
             "additionalProperties": false
         }),
+        command: "MCP only: vulcan_trade_multi_limit",
+        example: "vulcan_trade_multi_limit → { \"symbol\": \"SOL\", \"bids\": [{ \"price\": 140, \"size\": 25 }], \"asks\": [{ \"price\": 160, \"size\": 25 }], \"acknowledged\": true }",
+        auth_required: true,
     },
     ToolDef {
         name: "vulcan_trade_orders",
@@ -164,6 +192,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": [],
             "additionalProperties": false
         }),
+        command: "vulcan trade orders",
+        example: "vulcan trade orders -o json",
+        auth_required: true,
     },
     ToolDef {
         name: "vulcan_trade_cancel",
@@ -183,6 +214,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["scope", "acknowledged"],
             "additionalProperties": false
         }),
+        command: "vulcan trade <cancel|cancel-all|cancel-tpsl>",
+        example: "vulcan trade cancel-all --yes -o json    # all markets; or `cancel-all SOL` for one market",
+        auth_required: true,
     },
 
     ToolDef {
@@ -215,6 +249,9 @@ pub static TOOLS: &[ToolDef] = &[
                 "additionalProperties": false
             })
         },
+        command: "vulcan trade set-tpsl",
+        example: "vulcan trade set-tpsl SOL --tp-level 160:0.5 --tp-level 170:0.5 --sl-level 140 --yes -o json",
+        auth_required: true,
     },
     // ── Position ────────────────────────────────────────────────────────
     ToolDef {
@@ -227,6 +264,9 @@ pub static TOOLS: &[ToolDef] = &[
             "properties": {},
             "additionalProperties": false
         }),
+        command: "vulcan position list",
+        example: "vulcan position list -o json",
+        auth_required: true,
     },
     ToolDef {
         name: "vulcan_position_show",
@@ -241,6 +281,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["symbol"],
             "additionalProperties": false
         }),
+        command: "vulcan position show",
+        example: "vulcan position show SOL -o json",
+        auth_required: true,
     },
     ToolDef {
         name: "vulcan_position_close",
@@ -256,6 +299,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["symbol", "acknowledged"],
             "additionalProperties": false
         }),
+        command: "vulcan position close",
+        example: "vulcan position close SOL --yes -o json",
+        auth_required: true,
     },
     ToolDef {
         name: "vulcan_position_close_all",
@@ -270,6 +316,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["acknowledged"],
             "additionalProperties": false
         }),
+        command: "vulcan position close-all",
+        example: "vulcan position close-all --yes -o json",
+        auth_required: true,
     },
 
     // ── Margin ──────────────────────────────────────────────────────────
@@ -283,6 +332,9 @@ pub static TOOLS: &[ToolDef] = &[
             "properties": {},
             "additionalProperties": false
         }),
+        command: "vulcan margin status",
+        example: "vulcan margin status -o json",
+        auth_required: true,
     },
     ToolDef {
         name: "vulcan_margin_deposit",
@@ -298,6 +350,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["amount", "acknowledged"],
             "additionalProperties": false
         }),
+        command: "vulcan margin deposit",
+        example: "vulcan margin deposit 100 --yes -o json",
+        auth_required: true,
     },
     ToolDef {
         name: "vulcan_margin_withdraw",
@@ -313,6 +368,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["amount", "acknowledged"],
             "additionalProperties": false
         }),
+        command: "vulcan margin withdraw",
+        example: "vulcan margin withdraw 50 --yes -o json",
+        auth_required: true,
     },
     ToolDef {
         name: "vulcan_margin_transfer",
@@ -330,6 +388,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["from_subaccount", "to_subaccount", "amount", "acknowledged"],
             "additionalProperties": false
         }),
+        command: "vulcan margin transfer",
+        example: "vulcan margin transfer --from 0 --to 1 --amount 50 --yes -o json",
+        auth_required: true,
     },
     ToolDef {
         name: "vulcan_margin_transfer_child_to_parent",
@@ -345,6 +406,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["child_subaccount", "acknowledged"],
             "additionalProperties": false
         }),
+        command: "vulcan margin sweep",
+        example: "vulcan margin sweep --child 1 --yes -o json",
+        auth_required: true,
     },
     ToolDef {
         name: "vulcan_margin_sync_parent_to_child",
@@ -360,6 +424,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["child_subaccount", "acknowledged"],
             "additionalProperties": false
         }),
+        command: "vulcan margin sync",
+        example: "vulcan margin sync --child 1 --yes -o json",
+        auth_required: true,
     },
     ToolDef {
         name: "vulcan_margin_leverage_tiers",
@@ -374,6 +441,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["symbol"],
             "additionalProperties": false
         }),
+        command: "vulcan margin leverage-tiers",
+        example: "vulcan margin leverage-tiers SOL -o json",
+        auth_required: false,
     },
 
     ToolDef {
@@ -391,6 +461,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["symbol", "amount", "acknowledged"],
             "additionalProperties": false
         }),
+        command: "vulcan margin add-collateral",
+        example: "vulcan margin add-collateral SOL --amount 25 --yes -o json",
+        auth_required: true,
     },
 
     // ── Position (new) ─────────────────────────────────────────────────
@@ -409,6 +482,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["symbol", "size", "acknowledged"],
             "additionalProperties": false
         }),
+        command: "vulcan position reduce",
+        example: "vulcan position reduce SOL 25 --yes -o json",
+        auth_required: true,
     },
     ToolDef {
         name: "vulcan_position_tp_sl",
@@ -426,6 +502,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["symbol", "acknowledged"],
             "additionalProperties": false
         }),
+        command: "vulcan position tp-sl",
+        example: "vulcan position tp-sl SOL --tp 160 --sl 140 --yes -o json",
+        auth_required: true,
     },
 
     // ── History (read-only) ────────────────────────────────────────────
@@ -446,6 +525,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["type"],
             "additionalProperties": false
         }),
+        command: "vulcan history <trades|orders|collateral|funding|pnl>",
+        example: "vulcan history trades --symbol SOL --limit 100 -o json",
+        auth_required: true,
     },
 
     // ── Status ────────────────────────────────────────────────────────
@@ -459,6 +541,9 @@ pub static TOOLS: &[ToolDef] = &[
             "properties": {},
             "additionalProperties": false
         }),
+        command: "vulcan status",
+        example: "vulcan status -o json",
+        auth_required: false,
     },
 
     // ── Update (read-only) ────────────────────────────────────────────
@@ -474,6 +559,9 @@ pub static TOOLS: &[ToolDef] = &[
             },
             "additionalProperties": false
         }),
+        command: "vulcan update check",
+        example: "vulcan update check -o json",
+        auth_required: false,
     },
 
     // ── Wallet ────────────────────────────────────────────────────────
@@ -491,6 +579,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["name", "password"],
             "additionalProperties": false
         }),
+        command: "vulcan wallet create",
+        example: "vulcan wallet create --name main -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_wallet_list",
@@ -502,6 +593,9 @@ pub static TOOLS: &[ToolDef] = &[
             "properties": {},
             "additionalProperties": false
         }),
+        command: "vulcan wallet list",
+        example: "vulcan wallet list -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_wallet_address",
@@ -515,6 +609,9 @@ pub static TOOLS: &[ToolDef] = &[
             },
             "additionalProperties": false
         }),
+        command: "vulcan wallet show",
+        example: "vulcan wallet show main -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_wallet_balance",
@@ -528,6 +625,9 @@ pub static TOOLS: &[ToolDef] = &[
             },
             "additionalProperties": false
         }),
+        command: "vulcan wallet balance",
+        example: "vulcan wallet balance -o json",
+        auth_required: false,
     },
 
     // ── Portfolio (read-only) ─────────────────────────────────────────
@@ -547,6 +647,9 @@ pub static TOOLS: &[ToolDef] = &[
             },
             "additionalProperties": false
         }),
+        command: "vulcan portfolio",
+        example: "vulcan portfolio -o json",
+        auth_required: true,
     },
 
     // ── Paper trading (local simulation) ───────────────────────────────
@@ -564,6 +667,9 @@ pub static TOOLS: &[ToolDef] = &[
             },
             "additionalProperties": false
         }),
+        command: "vulcan paper init",
+        example: "vulcan paper init --balance 10000 -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_paper_status",
@@ -575,6 +681,9 @@ pub static TOOLS: &[ToolDef] = &[
             "properties": {},
             "additionalProperties": false
         }),
+        command: "vulcan paper status",
+        example: "vulcan paper status -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_paper_positions",
@@ -586,6 +695,9 @@ pub static TOOLS: &[ToolDef] = &[
             "properties": {},
             "additionalProperties": false
         }),
+        command: "vulcan paper positions",
+        example: "vulcan paper positions -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_paper_orders",
@@ -597,6 +709,9 @@ pub static TOOLS: &[ToolDef] = &[
             "properties": {},
             "additionalProperties": false
         }),
+        command: "vulcan paper orders",
+        example: "vulcan paper orders -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_paper_fills",
@@ -610,6 +725,9 @@ pub static TOOLS: &[ToolDef] = &[
             },
             "additionalProperties": false
         }),
+        command: "vulcan paper fills",
+        example: "vulcan paper fills --limit 50 -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_paper_trade",
@@ -630,6 +748,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["symbol", "side", "order_type"],
             "additionalProperties": false
         }),
+        command: "vulcan paper <buy|sell>",
+        example: "vulcan paper buy SOL --tokens 1 --type market -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_paper_cancel",
@@ -644,6 +765,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["order_id"],
             "additionalProperties": false
         }),
+        command: "vulcan paper cancel",
+        example: "vulcan paper cancel paper-order-1 -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_paper_cancel_all",
@@ -657,6 +781,9 @@ pub static TOOLS: &[ToolDef] = &[
             },
             "additionalProperties": false
         }),
+        command: "vulcan paper cancel-all",
+        example: "vulcan paper cancel-all SOL -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_paper_reconcile",
@@ -670,6 +797,9 @@ pub static TOOLS: &[ToolDef] = &[
             },
             "additionalProperties": false
         }),
+        command: "vulcan paper reconcile",
+        example: "vulcan paper reconcile SOL -o json",
+        auth_required: false,
     },
 
     // ── Account ───────────────────────────────────────────────────────
@@ -683,6 +813,9 @@ pub static TOOLS: &[ToolDef] = &[
             "properties": {},
             "additionalProperties": false
         }),
+        command: "vulcan account info",
+        example: "vulcan account info -o json",
+        auth_required: true,
     },
     ToolDef {
         name: "vulcan_account_register",
@@ -700,6 +833,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["acknowledged"],
             "additionalProperties": false
         }),
+        command: "vulcan account register",
+        example: "vulcan account register --access-code ABC123 --yes -o json",
+        auth_required: true,
     },
 
     // ── Auth ────────────────────────────────────────────────────────────
@@ -713,6 +849,9 @@ pub static TOOLS: &[ToolDef] = &[
             "properties": {},
             "additionalProperties": false
         }),
+        command: "vulcan auth status",
+        example: "vulcan auth status -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_auth_login",
@@ -727,6 +866,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["acknowledged"],
             "additionalProperties": false
         }),
+        command: "vulcan auth login",
+        example: "vulcan auth login --yes -o json",
+        auth_required: true,
     },
     ToolDef {
         name: "vulcan_auth_logout",
@@ -741,6 +883,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["acknowledged"],
             "additionalProperties": false
         }),
+        command: "vulcan auth logout",
+        example: "vulcan auth logout --yes -o json",
+        auth_required: false,
     },
 
     // ── Strategy runners ───────────────────────────────────────────────
@@ -775,6 +920,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["symbol", "side", "slices"],
             "additionalProperties": false
         }),
+        command: "vulcan strategy twap start",
+        example: "vulcan strategy twap start --symbol SOL --side buy --notional-usdc 1000 --slices 5 --interval-seconds 30 --mode paper -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_strategy_grid_start",
@@ -818,6 +966,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["symbol", "levels_per_side"],
             "additionalProperties": false
         }),
+        command: "vulcan strategy grid start",
+        example: "vulcan strategy grid start --symbol SOL --lower-price 140 --upper-price 160 --levels-per-side 5 --tokens-per-level 0.5 --mode paper -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_strategy_runs",
@@ -831,6 +982,9 @@ pub static TOOLS: &[ToolDef] = &[
             },
             "additionalProperties": false
         }),
+        command: "vulcan strategy runs",
+        example: "vulcan strategy runs -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_strategy_status",
@@ -847,6 +1001,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["run_id"],
             "additionalProperties": false
         }),
+        command: "vulcan strategy status <RUN_ID>",
+        example: "vulcan strategy status twap-... -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_strategy_monitor",
@@ -862,6 +1019,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["run_id"],
             "additionalProperties": false
         }),
+        command: "vulcan strategy monitor <RUN_ID>",
+        example: "vulcan strategy monitor grid-... -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_strategy_reconcile_grid",
@@ -876,6 +1036,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["run_id"],
             "additionalProperties": false
         }),
+        command: "vulcan strategy reconcile-grid <RUN_ID>",
+        example: "vulcan strategy reconcile-grid grid-... -o json",
+        auth_required: true,
     },
     ToolDef {
         name: "vulcan_strategy_wait_next_tick",
@@ -893,6 +1056,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["run_id"],
             "additionalProperties": false
         }),
+        command: "vulcan strategy wait-next-tick <RUN_ID>",
+        example: "vulcan strategy wait-next-tick twap-... --after-tick 1 -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_strategy_report",
@@ -907,6 +1073,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["run_id"],
             "additionalProperties": false
         }),
+        command: "vulcan strategy report <RUN_ID>",
+        example: "vulcan strategy report twap-... -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_strategy_pause",
@@ -922,6 +1091,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["run_id"],
             "additionalProperties": false
         }),
+        command: "vulcan strategy pause <RUN_ID>",
+        example: "vulcan strategy pause twap-... --reason user_requested -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_strategy_stop",
@@ -937,6 +1109,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["run_id"],
             "additionalProperties": false
         }),
+        command: "vulcan strategy stop <RUN_ID>",
+        example: "vulcan strategy stop twap-... --reason user_requested -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_strategy_finalize",
@@ -957,6 +1132,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["run_id"],
             "additionalProperties": false
         }),
+        command: "vulcan strategy finalize <RUN_ID>",
+        example: "vulcan strategy finalize grid-... --cancel-orders --close-position --wait --yes -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_strategy_preflight",
@@ -968,6 +1146,9 @@ pub static TOOLS: &[ToolDef] = &[
             "properties": {},
             "additionalProperties": false
         }),
+        command: "vulcan strategy preflight",
+        example: "vulcan strategy preflight -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_strategy_ta_start",
@@ -999,6 +1180,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["config"],
             "additionalProperties": false
         }),
+        command: "vulcan strategy ta start",
+        example: "vulcan strategy ta start --config-file strategy.json --mode paper --max-ticks 60 -o json",
+        auth_required: false,
     },
 
     // ── Technical analysis (read-only) ──────────────────────────────────
@@ -1020,6 +1204,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["symbol", "indicator"],
             "additionalProperties": false
         }),
+        command: "vulcan ta compute",
+        example: "vulcan ta compute SOL --indicator rsi --timeframe 1h --period 14 -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_ta_signal",
@@ -1048,6 +1235,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["symbol", "spec"],
             "additionalProperties": false
         }),
+        command: "vulcan ta signal",
+        example: "vulcan ta signal SOL --spec '{\"indicator\":\"rsi\",\"timeframe\":\"1h\",\"op\":\"lt\",\"threshold\":30}' -o json",
+        auth_required: false,
     },
     ToolDef {
         name: "vulcan_ta_report",
@@ -1063,6 +1253,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["symbol"],
             "additionalProperties": false
         }),
+        command: "vulcan ta report",
+        example: "vulcan ta report SOL --timeframe 1h -o json",
+        auth_required: false,
     },
 
     ToolDef {
@@ -1081,6 +1274,9 @@ pub static TOOLS: &[ToolDef] = &[
             "required": ["run_id"],
             "additionalProperties": false
         }),
+        command: "vulcan strategy resume <RUN_ID>",
+        example: "vulcan strategy resume twap-... --yes -o json",
+        auth_required: false,
     },
 ];
 

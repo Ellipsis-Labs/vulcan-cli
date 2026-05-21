@@ -44,7 +44,7 @@ TWAP-specific output behavior:
 
 Use the Vulcan runner for standard market-order TWAPs. Use the agent client's looping/background execution only for observe-only workflows, unsupported strategy shapes, or explicitly requested manual workflows. If a requested live mode or strategy shape is unsupported, do **not** treat that as permission to self-drive live slices with raw `vulcan_trade` calls. Offer supported runner modes, a reduced/manual plan, or ask for an explicit typed instruction requesting a manual live fallback. Do not write a custom scheduler script if the Vulcan runner, agent terminal, MCP tools, or app loop can execute the slices directly.
 
-Before starting, pick one of the execution modes defined in `vulcan-execution-modes` — load that skill for the canonical labels, the question format, and the follow-up checklist per mode. The five modes are Observe (read-only), Paper (`--mode paper`), Dry-Run (`--mode dry_run`), Confirm-Each (`--mode confirm_each`), and Auto-Execute (`--mode auto_execute`). Use a structured question UI when available. If the user selects Auto-Execute, treat that answer as permission to run within the stated parameters. In Paper mode, use the runner or MCP paper tools; do not use live trade tools.
+Before starting, pick a mode via the [`vulcan-execution-modes`](../vulcan-execution-modes/SKILL.md) skill (canonical mode list, question format, per-mode follow-ups). In Paper mode, use the runner or MCP paper tools — not live trade tools. If the user selects Auto-Execute, treat that as permission to run within the stated parameters.
 
 Always collect strategy controls before launch:
 
