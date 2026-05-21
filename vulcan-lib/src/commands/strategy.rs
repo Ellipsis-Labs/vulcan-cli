@@ -6,9 +6,9 @@ use crate::error::VulcanError;
 use crate::output::{render_success, TableRenderable};
 use crate::strategy::{
     clear_control_request, default_strategy_runs_dir, list_run_summaries, load_run_ledger,
-    load_run_report, read_run_ticks, write_control_request, write_run_ledger, GridRunResult,
-    StrategyControlAction, StrategyControlRequest, StrategyRunLedger, StrategyRunReport,
-    StrategyRunSummary, StrategyTick, TwapRunResult,
+    load_run_report, read_run_ticks, run_ledger_path, write_control_request, write_run_ledger,
+    GridRunResult, StrategyControlAction, StrategyControlRequest, StrategyRunLedger,
+    StrategyRunReport, StrategyRunSummary, StrategyTick, TwapRunResult,
 };
 use chrono::Utc;
 use std::fs;
@@ -490,6 +490,17 @@ pub fn monitor(
 /// CONTEXT.md § Strategy Monitoring. Slow-cadence runs must return early so the
 /// agent can emit a heartbeat or hand control back to the user.
 const MAX_WAIT_NEXT_TICK_SECONDS: u64 = 300;
+const MAX_POLL_INTERVAL_MS: u64 = 750;
+const MIN_POLL_INTERVAL_MS: u64 = 100;
+
+/// Sleep ~one quarter of a strategy's tick cadence between polls so the agent
+/// observes new ticks within ~25% of one cadence in the worst case. Clamped
+/// to [MIN, MAX] so fast strategies don't burn CPU and slow ones don't sit on
+/// a stale read for many seconds.
+fn poll_interval_ms(tick_interval_seconds: u64) -> u64 {
+    let scaled = tick_interval_seconds.saturating_mul(1000) / 4;
+    scaled.clamp(MIN_POLL_INTERVAL_MS, MAX_POLL_INTERVAL_MS)
+}
 
 pub async fn wait_next_tick(
     ctx: &AppContext,
@@ -507,15 +518,51 @@ pub async fn wait_next_tick(
         .checked_add(std::time::Duration::from_secs(timeout_seconds))
         .unwrap_or_else(std::time::Instant::now);
 
+    // Initial read — also establishes the ledger-mtime baseline used to skip
+    // redundant full-file reads while the strategy is quiet.
+    let initial = status_inner(ctx, run_id, Some(observed_tick), include_ledger, false)?;
+    if initial.terminal || !initial.new_ticks.is_empty() {
+        return Ok(initial);
+    }
+
+    let runs_dir = default_strategy_runs_dir(&ctx.vulcan_dir);
+    let ledger_path = run_ledger_path(&runs_dir, run_id);
+    let mut last_ledger_mtime = fs::metadata(&ledger_path).and_then(|m| m.modified()).ok();
+
+    // The ledger we just loaded inside status_inner carries the cadence; reuse
+    // it to size the poll interval. Fall back to the slow default if the run
+    // pre-dates this field for any reason.
+    let poll_ms = initial
+        .ledger
+        .as_ref()
+        .map(|ledger| poll_interval_ms(ledger.interval_seconds))
+        .or_else(|| {
+            load_run_ledger(&runs_dir, run_id)
+                .ok()
+                .map(|ledger| poll_interval_ms(ledger.interval_seconds))
+        })
+        .unwrap_or(MAX_POLL_INTERVAL_MS);
+
     loop {
+        if std::time::Instant::now() >= deadline {
+            return status_inner(ctx, run_id, Some(observed_tick), include_ledger, true);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(poll_ms)).await;
+
+        // Cheap stat: the runner rewrites the ledger on every tick AND on
+        // every state transition (pause/stop/error). If mtime hasn't moved,
+        // there's nothing new to see — skip the full ledger + tick-file
+        // reparse that status_inner would do.
+        let current_mtime = fs::metadata(&ledger_path).and_then(|m| m.modified()).ok();
+        if current_mtime == last_ledger_mtime {
+            continue;
+        }
+        last_ledger_mtime = current_mtime;
+
         let result = status_inner(ctx, run_id, Some(observed_tick), include_ledger, false)?;
         if result.terminal || !result.new_ticks.is_empty() {
             return Ok(result);
         }
-        if std::time::Instant::now() >= deadline {
-            return status_inner(ctx, run_id, Some(observed_tick), include_ledger, true);
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(750)).await;
     }
 }
 
@@ -1866,5 +1913,19 @@ mod tests {
         let (stale, warning) = stale_position_warning(Some(&tick), false);
         assert!(!stale);
         assert!(warning.is_none());
+    }
+
+    #[test]
+    fn poll_interval_scales_with_cadence_and_clamps() {
+        // Zero cadence floors at the minimum (defensive — should never happen).
+        assert_eq!(poll_interval_ms(0), MIN_POLL_INTERVAL_MS);
+        // Mid-range strategies use roughly a quarter of the cadence.
+        assert_eq!(poll_interval_ms(1), 250);
+        assert_eq!(poll_interval_ms(2), 500);
+        assert_eq!(poll_interval_ms(3), 750);
+        // Long cadences saturate at the maximum so heartbeat stays responsive.
+        assert_eq!(poll_interval_ms(4), MAX_POLL_INTERVAL_MS);
+        assert_eq!(poll_interval_ms(60), MAX_POLL_INTERVAL_MS);
+        assert_eq!(poll_interval_ms(u64::MAX), MAX_POLL_INTERVAL_MS);
     }
 }
