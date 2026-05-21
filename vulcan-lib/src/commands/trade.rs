@@ -730,7 +730,8 @@ pub fn size_spec_from_inputs(
 
 /// Resolve a SizeSpec into base lots, fetching market metadata and a quote
 /// price as needed. Adds zero round trips for `Lots`, one (cached) metadata
-/// read for `Tokens`, and metadata + a mid-price snapshot for `Notional`.
+/// read for `Tokens`, and metadata + a mid-price snapshot fetched in parallel
+/// for `Notional`.
 pub async fn resolve_base_lots(
     ctx: &AppContext,
     symbol: &str,
@@ -755,7 +756,12 @@ pub async fn resolve_base_lots(
                     "notional_usdc must be positive.",
                 ));
             }
-            let mark = crate::commands::market::fetch_market_quote_price(ctx, symbol).await?;
+            let (mark_result, metadata_result) = tokio::join!(
+                crate::commands::market::fetch_market_quote_price(ctx, symbol),
+                ctx.metadata(),
+            );
+            let mark = mark_result?;
+            metadata_result?;
             if mark <= 0.0 {
                 return Err(VulcanError::api(
                     "INVALID_MARK_PRICE",

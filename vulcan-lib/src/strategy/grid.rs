@@ -229,7 +229,11 @@ async fn build_grid_config(
     if matches!(mode, StrategyMode::ConfirmEach | StrategyMode::AutoExecute) && !ctx.dry_run {
         crate::commands::trade::resolve_wallet_and_pda(ctx, None)?;
     }
-    let info = market::execute_info_inner(ctx, &symbol).await?;
+    let (info_result, ticker_result) = tokio::join!(
+        market::execute_info_inner(ctx, &symbol),
+        market::execute_ticker_inner(ctx, &symbol),
+    );
+    let info = info_result?;
     if info.isolated_only && margin_mode == StrategyMarginMode::Cross {
         return Err(VulcanError::validation(
             "ISOLATED_ONLY_MARKET",
@@ -239,7 +243,7 @@ async fn build_grid_config(
             ),
         ));
     }
-    let ticker = market::execute_ticker_inner(ctx, &symbol).await?;
+    let ticker = ticker_result?;
     let (lower_price, upper_price) = resolve_grid_bounds(&args, ticker.mark_price)?;
     if lower_price <= 0.0 || upper_price <= 0.0 || lower_price >= upper_price {
         return Err(VulcanError::validation(
