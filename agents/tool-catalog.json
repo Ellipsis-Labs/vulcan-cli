@@ -1937,7 +1937,7 @@
       "name": "vulcan_ta_report",
       "command": "vulcan ta report",
       "group": "ta",
-      "description": "Bundled multi-indicator snapshot (RSI, MACD, BBands, ATR, ADX by default) for market-intel reports. Pass 'indicators' to request a custom subset.",
+      "description": "Bundled multi-indicator snapshot (RSI, MACD, BBands, ATR, ADX by default). Each indicator returns `latest` (named values from the most recent bar), `signals` (derived state — rsi.state, bbands.position_in_band, adx.trend_strength, macd.recent_cross, etc.), and `summary`. Full per-bar history is omitted by default to stay agent-friendly; pass `points_limit` to opt in. Use `vulcan_ta_compute` for the full series of one indicator.",
       "auth_required": false,
       "dangerous": false,
       "parameters": [
@@ -1959,6 +1959,12 @@
           "type": "string[]",
           "required": false,
           "description": "Optional subset of indicators to compute. Omit for the default bundle."
+        },
+        {
+          "name": "points_limit",
+          "type": "integer",
+          "required": false,
+          "description": "Number of recent points to include per indicator. Default omits the full series; signals and summary are computed from the full untrimmed series regardless."
         }
       ],
       "example": "vulcan ta report SOL --timeframe 1h -o json"

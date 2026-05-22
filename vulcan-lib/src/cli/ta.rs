@@ -52,5 +52,11 @@ pub enum TaCommand {
         /// Comma-separated indicator subset (e.g. "rsi,atr,bbands"). Omit for the default bundle.
         #[arg(long, value_delimiter = ',')]
         indicators: Option<Vec<String>>,
+
+        /// Number of recent points to include per indicator. Default omits the full
+        /// series (each indicator still ships its `latest`, `signals`, and `summary`).
+        /// Use `--points-limit 20` to include the last 20 bars; `0` is the same as default.
+        #[arg(long)]
+        points_limit: Option<usize>,
     },
 }

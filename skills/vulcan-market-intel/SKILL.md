@@ -72,6 +72,8 @@ vulcan_ta_report   → { symbol: "SOL", timeframe: "1h" }     # RSI + MACD + BBa
 vulcan_ta_compute  → { symbol: "SOL", indicator: "rsi", timeframe: "1h", period: 14 }
 ```
 
+`vulcan_ta_report` returns three blocks per indicator: `latest` (named most-recent-bar values, e.g. `bbands.latest.upper`), `signals` (derived state — `rsi.signals.state`, `bbands.signals.position_in_band`, `adx.signals.trend_strength`, `atr.signals.atr_pct_of_price`, `macd.signals.momentum` / `recent_cross`), and `summary` (with the human-readable `verdict`). Per-bar history is omitted by default; pass `points_limit: <n>` only if you need history. Use `vulcan_ta_compute` for a full series of a single indicator.
+
 Or fold a couple of overlays directly into the candle table with `--with-indicators`:
 
 ```
@@ -92,4 +94,4 @@ Before placing a trade, gather comprehensive market context:
 5. vulcan_ta_report        → { symbol, timeframe: "1h" }            # momentum + volatility verdict
 ```
 
-Summarize for the user: current price, 24h change, funding rate, spread, liquidity depth, and the indicator verdict (e.g. "RSI oversold, MACD bearish, ADX 31 → strong trend continuation risk before mean reversion").
+Summarize for the user: current price, 24h change, funding rate, spread, liquidity depth, and the indicator state by reading the `signals` block (e.g. `rsi.signals.state="oversold"`, `macd.signals.momentum="bearish"`, `adx.signals.trend_strength="strong"` → "strong trend continuation risk before mean reversion"). Fall back to `summary.verdict` lines if you need a one-liner per indicator.

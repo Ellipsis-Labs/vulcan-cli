@@ -1315,7 +1315,7 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "vulcan_ta_report",
-        description: "Bundled multi-indicator snapshot (RSI, MACD, BBands, ATR, ADX by default) for market-intel reports. Pass 'indicators' to request a custom subset.",
+        description: "Bundled multi-indicator snapshot (RSI, MACD, BBands, ATR, ADX by default). Each indicator returns `latest` (named values from the most recent bar), `signals` (derived state — rsi.state, bbands.position_in_band, adx.trend_strength, macd.recent_cross, etc.), and `summary`. Full per-bar history is omitted by default to stay agent-friendly; pass `points_limit` to opt in. Use `vulcan_ta_compute` for the full series of one indicator.",
         group: "ta",
         dangerous: false,
         schema: || json!({
@@ -1327,6 +1327,11 @@ pub static TOOLS: &[ToolDef] = &[
                     "type": "array",
                     "items": { "type": "string", "enum": ["sma","ema","rsi","macd","bbands","atr","vwap","adx","stoch"] },
                     "description": "Optional subset of indicators to compute. Omit for the default bundle."
+                },
+                "points_limit": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Number of recent points to include per indicator. Default omits the full series; signals and summary are computed from the full untrimmed series regardless."
                 }
             },
             "required": ["symbol"],

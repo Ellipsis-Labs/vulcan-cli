@@ -644,6 +644,8 @@ mod tests {
             symbol: "TEST".into(),
             timeframe: "1h".into(),
             period: 14,
+            latest: BTreeMap::new(),
+            signals: BTreeMap::new(),
             points,
             summary: IndicatorSummary {
                 primary_key: key.to_string(),

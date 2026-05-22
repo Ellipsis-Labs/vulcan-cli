@@ -84,12 +84,15 @@ pub async fn execute(ctx: &AppContext, cmd: TaCommand) -> Result<(), VulcanError
             symbol,
             timeframe,
             indicators: requested,
+            points_limit,
         } => {
             let kinds = match requested.as_deref() {
                 Some(list) if !list.is_empty() => Some(parse_indicator_list(list)?),
                 _ => None,
             };
-            let report = indicators::report(ctx, &symbol, &timeframe, kinds.as_deref()).await?;
+            let report =
+                indicators::report(ctx, &symbol, &timeframe, kinds.as_deref(), points_limit)
+                    .await?;
             render_success(
                 ctx.output_format,
                 &report,

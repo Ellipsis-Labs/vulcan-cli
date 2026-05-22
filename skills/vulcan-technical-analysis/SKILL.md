@@ -56,7 +56,13 @@ Ops: `lt`, `lte`, `gt`, `gte`, `crosses_above`, `crosses_below`. The `crosses_*`
 vulcan_ta_report → { symbol: "SOL", timeframe: "1h" }
 ```
 
-One call returns RSI + MACD + BBands + ATR + ADX. Ideal for the market-intel handoff: a single string per indicator agents can paste into a summary.
+One call returns RSI + MACD + BBands + ATR + ADX. Each indicator ships three agent-ready blocks:
+
+- `latest` — named values from the most recent bar (e.g. `bbands.latest.upper`, `bbands.latest.lower`, `macd.latest.signal`, `atr.latest.atr`). Use these instead of scanning `points`.
+- `signals` — derived state: `rsi.signals.state` (`oversold|bearish|neutral|bullish|overbought`), `bbands.signals.state` + `position_in_band` + `width_pct`, `adx.signals.trend_strength` (`weak|emerging|strong|very_strong`), `atr.signals.atr_pct_of_price`, `macd.signals.momentum` + optional `recent_cross`.
+- `summary` — `latest`, `min`, `max`, `mean`, and the human-readable `verdict` line.
+
+Per-bar history is **omitted by default**. Pass `points_limit: 20` (or any positive integer) to opt in to the last N bars; signals and summary are computed from the full untrimmed series regardless. For the full series of a single indicator, use `vulcan_ta_compute` instead.
 
 ## Trigger Patterns
 

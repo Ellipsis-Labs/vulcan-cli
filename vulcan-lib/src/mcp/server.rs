@@ -167,9 +167,18 @@ impl VulcanMcpServer {
                     }
                     _ => None,
                 };
-                let report =
-                    crate::indicators::report(&self.ctx, &symbol, &timeframe, kinds.as_deref())
-                        .await?;
+                let points_limit = args
+                    .get("points_limit")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as usize);
+                let report = crate::indicators::report(
+                    &self.ctx,
+                    &symbol,
+                    &timeframe,
+                    kinds.as_deref(),
+                    points_limit,
+                )
+                .await?;
                 Ok(serde_json::to_value(report).unwrap())
             }
 

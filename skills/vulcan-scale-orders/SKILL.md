@@ -147,22 +147,22 @@ When the user says "scale in to SOL longs" with no prices, **propose** a range a
 Recipe:
 
 1. Get current mark from `vulcan_market_ticker`.
-2. Get a volatility / trend snapshot from `vulcan_ta_report → { symbol, timeframe: "1h" }`. Note `bbands.upper / .lower`, `atr`, `rsi`, `adx`.
+2. Get a volatility / trend snapshot from `vulcan_ta_report → { symbol, timeframe: "1h" }`. Read off the per-indicator `latest` and `signals` blocks: `bbands.latest.upper / .lower / .middle`, `atr.latest.atr` (and `atr.signals.atr_pct_of_price`), `rsi.latest.rsi` (and `rsi.signals.state`), `adx.latest.adx` (and `adx.signals.trend_strength`). Don't request `points_limit` unless you actually need history.
 3. Pick the range:
    - **Long entry (`side: buy`)**:
      - `upper_price` = current mark (or `mark − 0.25 × atr` for a small buffer below).
-     - `lower_price` = `max(bbands.lower, mark − 2 × atr, recent_swing_low)`.
+     - `lower_price` = `max(bbands.latest.lower, mark − 2 × atr, recent_swing_low)`.
    - **Short entry (`side: sell`)**:
      - `lower_price` = current mark (or `mark + 0.25 × atr`).
-     - `upper_price` = `min(bbands.upper, mark + 2 × atr, recent_swing_high)`.
+     - `upper_price` = `min(bbands.latest.upper, mark + 2 × atr, recent_swing_high)`.
    - `recent_swing_low / high`: pull from `vulcan_market_candles` over the last 50–100 bars at the chosen timeframe.
 4. Pick `levels` from range width:
    - Spacing should be ≥ `0.25 × atr` so fills aren't all clustered into noise.
    - `levels = clamp( round( (upper − lower) / (0.5 × atr) ), 3, 8 )`.
 5. Snap every price to the market `tick_size` from `vulcan_market_info`.
 6. Sanity gate before suggesting:
-   - If `adx > 30` and the range is **against the trend** (e.g. scaling longs into a strong downtrend), flag this and ask the user to confirm — they may be catching a falling knife.
-   - If `rsi` already < 25 (long entry) or > 75 (short entry), the range may be too late / too early — surface it.
+   - If `adx.signals.trend_strength` is `strong` or `very_strong` and the range is **against the trend** (e.g. scaling longs into a strong downtrend), flag this and ask the user to confirm — they may be catching a falling knife.
+   - If `rsi.signals.state` is `oversold` (long entry) or `overbought` (short entry), the range may be too late / too early — surface it.
 
 Present the suggestion compactly:
 

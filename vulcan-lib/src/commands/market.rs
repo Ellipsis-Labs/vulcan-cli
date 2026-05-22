@@ -743,50 +743,16 @@ pub fn attach_indicators(
             ));
         }
         let points = crate::indicators::batch::compute_points(&result.candles, &request)?;
-        let summary = build_inline_summary(kind, &points);
-        series_vec.push(crate::indicators::IndicatorSeries {
+        series_vec.push(crate::indicators::IndicatorSeries::from_points(
             kind,
-            symbol: result.symbol.clone(),
-            timeframe: result.interval.clone(),
+            result.symbol.clone(),
+            result.interval.clone(),
             period,
             points,
-            summary,
-        });
+        ));
     }
     result.indicators = series_vec;
     Ok(())
-}
-
-fn build_inline_summary(
-    kind: crate::indicators::IndicatorKind,
-    points: &[crate::indicators::IndicatorPoint],
-) -> crate::indicators::IndicatorSummary {
-    let key = kind.primary_key().to_string();
-    let values: Vec<f64> = points
-        .iter()
-        .filter_map(|p| p.values.get(&key).copied().filter(|v| !v.is_nan()))
-        .collect();
-    let latest = values.last().copied();
-    crate::indicators::IndicatorSummary {
-        primary_key: key,
-        latest,
-        min: values
-            .iter()
-            .copied()
-            .fold(None, |a: Option<f64>, v| Some(a.map_or(v, |m| m.min(v)))),
-        max: values
-            .iter()
-            .copied()
-            .fold(None, |a: Option<f64>, v| Some(a.map_or(v, |m| m.max(v)))),
-        mean: if values.is_empty() {
-            None
-        } else {
-            Some(values.iter().sum::<f64>() / values.len() as f64)
-        },
-        verdict: latest
-            .map(|v| format!("latest {:.4}", v))
-            .unwrap_or_else(|| "insufficient data".to_string()),
-    }
 }
 
 pub async fn execute(ctx: &AppContext, cmd: MarketCommand) -> Result<(), VulcanError> {
