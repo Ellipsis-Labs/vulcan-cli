@@ -168,7 +168,7 @@ pub async fn order(
     side: PaperSide,
     args: PaperOrderArgs,
 ) -> Result<PaperOrderResult, VulcanError> {
-    let (path, state) = paper::load_state(&ctx.vulcan_dir)?;
+    let (path, state, _lock) = paper::locked_load_state(&ctx.vulcan_dir)?;
     let order_type = match args.order_type {
         PaperOrderTypeArg::Market => PaperOrderType::Market,
         PaperOrderTypeArg::Limit => PaperOrderType::Limit,
@@ -196,7 +196,7 @@ pub async fn order(
 }
 
 pub fn cancel(ctx: &AppContext, order_id: &str) -> Result<PaperCancelResult, VulcanError> {
-    let (path, state) = paper::load_state(&ctx.vulcan_dir)?;
+    let (path, state, _lock) = paper::locked_load_state(&ctx.vulcan_dir)?;
     let (result, _) = paper::cancel(&path, state, order_id)?;
     Ok(result)
 }
@@ -205,7 +205,7 @@ pub fn cancel_all(
     ctx: &AppContext,
     symbol: Option<&str>,
 ) -> Result<PaperCancelResult, VulcanError> {
-    let (path, state) = paper::load_state(&ctx.vulcan_dir)?;
+    let (path, state, _lock) = paper::locked_load_state(&ctx.vulcan_dir)?;
     let (result, _) = paper::cancel_all(&path, state, symbol)?;
     Ok(result)
 }
@@ -214,7 +214,7 @@ pub async fn reconcile(
     ctx: &AppContext,
     symbol: Option<&str>,
 ) -> Result<PaperReconcileResult, VulcanError> {
-    let (path, state) = paper::load_state(&ctx.vulcan_dir)?;
+    let (path, state, _lock) = paper::locked_load_state(&ctx.vulcan_dir)?;
     let (result, _) = paper::reconcile(ctx, &path, state, symbol).await?;
     Ok(result)
 }
@@ -225,7 +225,7 @@ pub async fn set_tpsl(
     tp_inputs: Vec<TpSlInput>,
     sl_inputs: Vec<TpSlInput>,
 ) -> Result<PaperSetTpSlResult, VulcanError> {
-    let (path, state) = paper::load_state(&ctx.vulcan_dir)?;
+    let (path, state, _lock) = paper::locked_load_state(&ctx.vulcan_dir)?;
     let (result, _) = paper::set_tpsl(ctx, &path, state, symbol, tp_inputs, sl_inputs).await?;
     Ok(result)
 }
@@ -236,7 +236,7 @@ pub fn cancel_tpsl(
     cancel_tp: bool,
     cancel_sl: bool,
 ) -> Result<PaperCancelTpSlResult, VulcanError> {
-    let (path, state) = paper::load_state(&ctx.vulcan_dir)?;
+    let (path, state, _lock) = paper::locked_load_state(&ctx.vulcan_dir)?;
     let (result, _) = paper::cancel_tpsl(&path, state, symbol, cancel_tp, cancel_sl)?;
     Ok(result)
 }

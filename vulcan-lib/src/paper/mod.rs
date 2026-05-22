@@ -460,6 +460,74 @@ fn set_private_permissions(path: &Path) {
 #[cfg(not(unix))]
 fn set_private_permissions(_path: &Path) {}
 
+/// RAII guard that holds an exclusive advisory flock on the paper-state lock file.
+/// Concurrent `vulcan` processes (e.g. parallel strategy runners) block here
+/// until the previous writer releases the lock.  The guard is intentionally
+/// opaque — callers just hold it in scope until the matching `save_state` call
+/// returns, then drop it.
+#[cfg(unix)]
+pub struct PaperStateLock {
+    _file: std::fs::File,
+}
+
+#[cfg(unix)]
+impl PaperStateLock {
+    pub fn acquire(vulcan_dir: &Path) -> Result<Self, VulcanError> {
+        use std::fs::OpenOptions;
+        use std::os::unix::io::AsRawFd;
+
+        extern "C" {
+            fn flock(fd: std::ffi::c_int, operation: std::ffi::c_int) -> std::ffi::c_int;
+        }
+        const LOCK_EX: std::ffi::c_int = 2;
+
+        let lock_path = vulcan_dir.join("paper-state.lock");
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(&lock_path)
+            .map_err(|e| VulcanError::io("PAPER_LOCK_OPEN_FAILED", e.to_string()))?;
+        let ret = unsafe { flock(file.as_raw_fd(), LOCK_EX) };
+        if ret != 0 {
+            return Err(VulcanError::io(
+                "PAPER_LOCK_ACQUIRE_FAILED",
+                std::io::Error::last_os_error().to_string(),
+            ));
+        }
+        Ok(PaperStateLock { _file: file })
+    }
+}
+
+#[cfg(unix)]
+impl Drop for PaperStateLock {
+    fn drop(&mut self) {
+        use std::os::unix::io::AsRawFd;
+        extern "C" {
+            fn flock(fd: std::ffi::c_int, operation: std::ffi::c_int) -> std::ffi::c_int;
+        }
+        const LOCK_UN: std::ffi::c_int = 8;
+        unsafe { flock(self._file.as_raw_fd(), LOCK_UN) };
+    }
+}
+
+/// Acquires the paper-state exclusive lock, then loads the state.
+/// Hold the returned `PaperStateLock` in scope until after `save_state` completes.
+/// On non-Unix platforms this is equivalent to `load_state` with no locking.
+#[cfg(unix)]
+pub fn locked_load_state(
+    vulcan_dir: &Path,
+) -> Result<(PathBuf, PaperState, PaperStateLock), VulcanError> {
+    let lock = PaperStateLock::acquire(vulcan_dir)?;
+    let (path, state) = load_state(vulcan_dir)?;
+    Ok((path, state, lock))
+}
+
+#[cfg(not(unix))]
+pub fn locked_load_state(vulcan_dir: &Path) -> Result<(PathBuf, PaperState, ()), VulcanError> {
+    let (path, state) = load_state(vulcan_dir)?;
+    Ok((path, state, ()))
+}
+
 pub async fn mark_state(
     ctx: &AppContext,
     mut state: PaperState,
@@ -1445,12 +1513,29 @@ fn apply_position_fill(
     price: f64,
     size: ResolvedPaperSize,
 ) -> f64 {
-    let signed_new = side.signed(size.tokens);
+    // Net positions in integer lots. Tokens are a derived view: doing the
+    // arithmetic in floats accumulates rounding drift across many opposite-
+    // side fills, and a non-exact `signed_total.abs() < f64::EPSILON` check
+    // misses residues ~1e-10 that nevertheless round to zero lots — leaving
+    // a phantom position with `size_lots: 0` but `size_tokens > 0`.
+    let signed_new_lots: i128 = match side {
+        PaperSide::Buy => size.lots as i128,
+        PaperSide::Sell => -(size.lots as i128),
+    };
+    // tokens-per-lot for this market — invariant across fills on the same
+    // symbol (same `base_lots_decimals`), so we use it to project the
+    // position's net lots back to a clean token count.
+    let tokens_per_lot = if size.lots == 0 {
+        0.0
+    } else {
+        size.tokens / size.lots as f64
+    };
+
     let Some(idx) = state.positions.iter().position(|p| p.symbol == symbol) else {
         state.positions.push(PaperPosition {
             symbol: symbol.to_string(),
-            side: position_side(signed_new).to_string(),
-            size_tokens: signed_new.abs(),
+            side: if signed_new_lots >= 0 { "long" } else { "short" }.to_string(),
+            size_tokens: size.tokens,
             size_lots: size.lots,
             entry_price: price,
             mark_price: price,
@@ -1463,36 +1548,50 @@ fn apply_position_fill(
     };
 
     let position = &mut state.positions[idx];
-    let signed_old = signed_position_qty(position);
-    let realized = if signed_old.signum() != signed_new.signum() {
-        let closed = signed_old.abs().min(signed_new.abs());
-        if signed_old > 0.0 {
-            (price - position.entry_price) * closed
+    let signed_old_lots: i128 = if position.side == "long" {
+        position.size_lots as i128
+    } else {
+        -(position.size_lots as i128)
+    };
+    let opposite_sign = signed_old_lots.signum() != signed_new_lots.signum()
+        && signed_old_lots != 0
+        && signed_new_lots != 0;
+    let closed_lots: u64 = if opposite_sign {
+        signed_old_lots.abs().min(signed_new_lots.abs()) as u64
+    } else {
+        0
+    };
+    let closed_tokens = closed_lots as f64 * tokens_per_lot;
+    let realized = if closed_lots > 0 {
+        if signed_old_lots > 0 {
+            (price - position.entry_price) * closed_tokens
         } else {
-            (position.entry_price - price) * closed
+            (position.entry_price - price) * closed_tokens
         }
     } else {
         0.0
     };
-    let signed_total = signed_old + signed_new;
+    let signed_total_lots = signed_old_lots + signed_new_lots;
     position.realized_pnl += realized;
 
-    if signed_total.abs() < f64::EPSILON {
+    if signed_total_lots == 0 {
         state.positions.remove(idx);
         return realized;
     }
 
-    if signed_old.signum() == signed_new.signum() {
-        position.entry_price = ((signed_old.abs() * position.entry_price)
-            + (signed_new.abs() * price))
-            / signed_total.abs();
-    } else if signed_total.signum() != signed_old.signum() {
+    if signed_old_lots.signum() == signed_new_lots.signum() {
+        let old_abs = signed_old_lots.unsigned_abs() as f64;
+        let new_abs = signed_new_lots.unsigned_abs() as f64;
+        position.entry_price =
+            (old_abs * position.entry_price + new_abs * price) / (old_abs + new_abs);
+    } else if signed_total_lots.signum() != signed_old_lots.signum() {
         position.entry_price = price;
     }
 
-    position.side = position_side(signed_total).to_string();
-    position.size_tokens = signed_total.abs();
-    position.size_lots = size_tokens_to_lots(position.size_tokens, size.tokens, size.lots);
+    let total_abs_lots = signed_total_lots.unsigned_abs() as u64;
+    position.side = if signed_total_lots > 0 { "long" } else { "short" }.to_string();
+    position.size_lots = total_abs_lots;
+    position.size_tokens = total_abs_lots as f64 * tokens_per_lot;
     position.mark_price = price;
     position.unrealized_pnl = unrealized_for(position, price);
     realized
@@ -1518,8 +1617,10 @@ fn refresh_and_evaluate(state: &mut PaperState, symbol: &str, mark: f64) -> Vec<
 /// Fire any active triggers on `symbol` that have been crossed by `mark`.
 /// Fills are applied at the trigger price (paper always fills at the
 /// configured trigger, never at the live bid/ask), capped by the remaining
-/// position. When a trigger closes the position, any remaining triggers on
-/// the same symbol are purged as orphans.
+/// position. When a trigger closes the position, any remaining **active**
+/// triggers on the same symbol are purged as orphans; pending triggers
+/// (attached to still-resting limit orders) survive and arm when their
+/// parent order eventually fills.
 fn evaluate_triggers(state: &mut PaperState, symbol: &str, mark: f64) -> Vec<PaperFill> {
     if !mark.is_finite() || mark <= 0.0 {
         return Vec::new();
@@ -1578,7 +1679,9 @@ fn evaluate_triggers(state: &mut PaperState, symbol: &str, mark: f64) -> Vec<Pap
         fills.push(fill);
 
         if !state.positions.iter().any(|p| p.symbol == symbol) {
-            state.triggers.retain(|t| t.symbol != symbol);
+            state
+                .triggers
+                .retain(|t| t.symbol != symbol || t.parent_order_id.is_some());
             break;
         }
     }
@@ -1690,7 +1793,9 @@ fn replay_candle_triggers(
             fills.push(fill);
 
             if !state.positions.iter().any(|p| p.symbol == symbol) {
-                state.triggers.retain(|t| t.symbol != symbol);
+                state
+                    .triggers
+                    .retain(|t| t.symbol != symbol || t.parent_order_id.is_some());
                 break;
             }
         }
@@ -1723,26 +1828,6 @@ fn unrealized_for(position: &PaperPosition, mark: f64) -> f64 {
     } else {
         (position.entry_price - mark) * position.size_tokens
     }
-}
-
-fn signed_position_qty(position: &PaperPosition) -> f64 {
-    if position.side == "long" {
-        position.size_tokens
-    } else {
-        -position.size_tokens
-    }
-}
-
-fn position_side(signed_qty: f64) -> &'static str {
-    if signed_qty >= 0.0 {
-        "long"
-    } else {
-        "short"
-    }
-}
-
-fn size_tokens_to_lots(position_tokens: f64, fill_tokens: f64, fill_lots: u64) -> u64 {
-    ((position_tokens / fill_tokens) * fill_lots as f64).round() as u64
 }
 
 fn limit_crosses(side: PaperSide, price: f64, market: PaperMarketPrice) -> bool {
@@ -2076,6 +2161,206 @@ mod tests {
         assert_eq!(fills.len(), 1);
         assert!(state.positions.is_empty());
         assert!(state.triggers.is_empty(), "orphan TP purged");
+    }
+
+    #[test]
+    fn pending_triggers_survive_position_close() {
+        // Regression: when an active SL fires and closes the position to zero,
+        // the orphan-purge must not wipe pending triggers attached to a
+        // separate resting limit on the same symbol. Those belong to the
+        // resting order's eventual fill, not to the now-closed position.
+        let mut state = PaperState::new(10_000.0, "USDC".to_string(), 0.0);
+        seed_long_position(&mut state);
+        // Active SL sized to the full 1.0 SOL long — closes the position when it fires.
+        let active_sl = state.next_trigger_id();
+        state.triggers.push(PaperTrigger {
+            trigger_id: active_sl,
+            symbol: "SOL".to_string(),
+            kind: PaperTriggerKind::StopLoss,
+            position_side: "long".to_string(),
+            trigger_price: 90.0,
+            size_tokens: 1.0,
+            size_lots: 100,
+            parent_order_id: None,
+            created_at: "2023-01-01T00:00:00Z".to_string(),
+        });
+        // A resting limit and its pending TP/SL on the same symbol. These
+        // belong to the next leg's fill; the purge must leave them alone.
+        let resting_id = state.next_order_id();
+        state.orders.push(PaperOrder {
+            order_id: resting_id.clone(),
+            symbol: "SOL".to_string(),
+            side: "buy".to_string(),
+            price: 95.0,
+            size_tokens: 0.5,
+            size_lots: 50,
+            created_at: "2023-01-01T00:00:00Z".to_string(),
+        });
+        for kind in [PaperTriggerKind::TakeProfit, PaperTriggerKind::StopLoss] {
+            let trigger_id = state.next_trigger_id();
+            state.triggers.push(PaperTrigger {
+                trigger_id,
+                symbol: "SOL".to_string(),
+                kind,
+                position_side: "long".to_string(),
+                trigger_price: if matches!(kind, PaperTriggerKind::TakeProfit) {
+                    110.0
+                } else {
+                    85.0
+                },
+                size_tokens: 0.5,
+                size_lots: 50,
+                parent_order_id: Some(resting_id.clone()),
+                created_at: "2023-01-01T00:00:00Z".to_string(),
+            });
+        }
+
+        let fills = evaluate_triggers(&mut state, "SOL", 89.0);
+        assert_eq!(fills.len(), 1, "active SL fires once");
+        assert!(state.positions.is_empty(), "position closed by SL");
+        assert_eq!(
+            state.triggers.len(),
+            2,
+            "pending triggers on resting order must survive"
+        );
+        for t in &state.triggers {
+            assert_eq!(
+                t.parent_order_id.as_deref(),
+                Some(resting_id.as_str()),
+                "surviving triggers still parented to the resting order"
+            );
+        }
+        assert_eq!(state.orders.len(), 1, "resting order still present");
+    }
+
+    #[test]
+    fn netting_in_lots_handles_float_residue() {
+        // Regression: many mixed-side buys/sells used to accumulate float drift
+        // in `size_tokens`, leaving residues (~1e-10) that exceeded
+        // `f64::EPSILON` (~2.2e-16) but rounded to zero lots — producing a
+        // phantom position with size_lots: 0 and size_tokens > 0. After
+        // refactoring `apply_position_fill` to net in integer lots, any
+        // sequence that nets to zero lots must remove the position cleanly.
+        let mut state = PaperState::new(1_000_000.0, "USDC".to_string(), 0.0);
+        // Sequence whose lot-net is exactly zero across many opposite-side
+        // fills at the same price (so realized PnL is also zero). Chosen to
+        // accumulate float error in the old token-based netting path.
+        let pairs: [(PaperSide, u64); 12] = [
+            (PaperSide::Buy, 185),
+            (PaperSide::Sell, 207),
+            (PaperSide::Buy, 152),
+            (PaperSide::Sell, 112),
+            (PaperSide::Buy, 162),
+            (PaperSide::Sell, 469),
+            (PaperSide::Buy, 67),
+            (PaperSide::Sell, 251),
+            (PaperSide::Buy, 467),
+            (PaperSide::Sell, 51),
+            (PaperSide::Buy, 348),
+            (PaperSide::Sell, 25),
+        ];
+        // Net lots: +185 -207 +152 -112 +162 -469 +67 -251 +467 -51 +348 -25 = 266
+        // Make the last fill close the net to zero exactly.
+        let net: i128 = pairs
+            .iter()
+            .map(|(s, l)| match s {
+                PaperSide::Buy => *l as i128,
+                PaperSide::Sell => -(*l as i128),
+            })
+            .sum();
+        let closer_side = if net > 0 {
+            PaperSide::Sell
+        } else {
+            PaperSide::Buy
+        };
+        for (side, lots) in pairs {
+            apply_fill(
+                &mut state,
+                None,
+                "SOL",
+                side,
+                PaperOrderType::Market,
+                5.0,
+                ResolvedPaperSize {
+                    lots,
+                    tokens: lots as f64 / 100.0,
+                },
+            );
+        }
+        let closer_lots = net.unsigned_abs() as u64;
+        apply_fill(
+            &mut state,
+            None,
+            "SOL",
+            closer_side,
+            PaperOrderType::Market,
+            5.0,
+            ResolvedPaperSize {
+                lots: closer_lots,
+                tokens: closer_lots as f64 / 100.0,
+            },
+        );
+        assert!(
+            state.positions.is_empty(),
+            "position must close cleanly when lot-net is zero, got {:?}",
+            state.positions
+        );
+    }
+
+    #[test]
+    fn pending_triggers_survive_candle_replay_position_close() {
+        // Same regression for the candle-replay path: a candle that crosses
+        // the active SL must close the position without sweeping pending
+        // triggers attached to a resting limit on the same symbol.
+        let mut state = PaperState::new(10_000.0, "USDC".to_string(), 0.0);
+        seed_long_position(&mut state);
+        // Full-size active SL — fires on candle low <= 90, closing the 1.0 SOL long.
+        let active_sl = state.next_trigger_id();
+        state.triggers.push(PaperTrigger {
+            trigger_id: active_sl,
+            symbol: "SOL".to_string(),
+            kind: PaperTriggerKind::StopLoss,
+            position_side: "long".to_string(),
+            trigger_price: 90.0,
+            size_tokens: 1.0,
+            size_lots: 100,
+            parent_order_id: None,
+            created_at: "2023-01-01T00:00:00Z".to_string(),
+        });
+        let resting_id = state.next_order_id();
+        state.orders.push(PaperOrder {
+            order_id: resting_id.clone(),
+            symbol: "SOL".to_string(),
+            side: "buy".to_string(),
+            price: 95.0,
+            size_tokens: 0.5,
+            size_lots: 50,
+            created_at: "2023-01-01T00:00:00Z".to_string(),
+        });
+        let pending_id = state.next_trigger_id();
+        state.triggers.push(PaperTrigger {
+            trigger_id: pending_id.clone(),
+            symbol: "SOL".to_string(),
+            kind: PaperTriggerKind::TakeProfit,
+            position_side: "long".to_string(),
+            trigger_price: 110.0,
+            size_tokens: 0.5,
+            size_lots: 50,
+            parent_order_id: Some(resting_id.clone()),
+            created_at: "2023-01-01T00:00:00Z".to_string(),
+        });
+
+        let candles = vec![candle(1_700_000_000, 100.0, 102.0, 85.0, 95.0)];
+        let fills = replay_candle_triggers(&mut state, "SOL", &candles);
+        assert_eq!(fills.len(), 1, "active SL fires once on candle replay");
+        assert!(state.positions.is_empty(), "position closed by replay SL");
+        assert_eq!(state.triggers.len(), 1, "pending TP survives");
+        assert_eq!(state.triggers[0].trigger_id, pending_id);
+        assert_eq!(
+            state.triggers[0].parent_order_id.as_deref(),
+            Some(resting_id.as_str())
+        );
+        assert_eq!(state.orders.len(), 1, "resting order still present");
     }
 
     fn candle(close_time: i64, open: f64, high: f64, low: f64, close: f64) -> ReplayCandle {
