@@ -148,13 +148,6 @@ impl PaperSide {
             Self::Sell => "sell",
         }
     }
-
-    fn signed(self, size_tokens: f64) -> f64 {
-        match self {
-            Self::Buy => size_tokens,
-            Self::Sell => -size_tokens,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -485,6 +478,7 @@ impl PaperStateLock {
         let file = OpenOptions::new()
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&lock_path)
             .map_err(|e| VulcanError::io("PAPER_LOCK_OPEN_FAILED", e.to_string()))?;
         let ret = unsafe { flock(file.as_raw_fd(), LOCK_EX) };
@@ -1534,7 +1528,12 @@ fn apply_position_fill(
     let Some(idx) = state.positions.iter().position(|p| p.symbol == symbol) else {
         state.positions.push(PaperPosition {
             symbol: symbol.to_string(),
-            side: if signed_new_lots >= 0 { "long" } else { "short" }.to_string(),
+            side: if signed_new_lots >= 0 {
+                "long"
+            } else {
+                "short"
+            }
+            .to_string(),
             size_tokens: size.tokens,
             size_lots: size.lots,
             entry_price: price,
@@ -1589,7 +1588,12 @@ fn apply_position_fill(
     }
 
     let total_abs_lots = signed_total_lots.unsigned_abs() as u64;
-    position.side = if signed_total_lots > 0 { "long" } else { "short" }.to_string();
+    position.side = if signed_total_lots > 0 {
+        "long"
+    } else {
+        "short"
+    }
+    .to_string();
     position.size_lots = total_abs_lots;
     position.size_tokens = total_abs_lots as f64 * tokens_per_lot;
     position.mark_price = price;
