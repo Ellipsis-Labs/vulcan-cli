@@ -641,7 +641,7 @@ fn insert_before_first_order_or_conditional_ix(
 }
 
 fn is_order_or_position_conditional_ix(ix: &solana_sdk::instruction::Instruction) -> bool {
-    ix.program_id == phoenix_rise::phoenix_rise_ix::PHOENIX_PROGRAM_ID
+    ix.program_id == *phoenix_rise::phoenix_rise_ix::PHOENIX_PROGRAM_ID
         && (ix
             .data
             .starts_with(&phoenix_rise::phoenix_rise_ix::place_market_order_discriminant())
@@ -2598,7 +2598,7 @@ mod conditional_orders_init_tests {
 
     fn phoenix_ix(discriminant: [u8; 8]) -> solana_sdk::instruction::Instruction {
         test_ix(
-            phoenix_rise::phoenix_rise_ix::PHOENIX_PROGRAM_ID,
+            *phoenix_rise::phoenix_rise_ix::PHOENIX_PROGRAM_ID,
             discriminant.to_vec(),
         )
     }
