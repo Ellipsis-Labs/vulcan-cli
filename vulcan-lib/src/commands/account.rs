@@ -241,17 +241,8 @@ pub async fn execute(ctx: &AppContext, cmd: AccountCommand) -> Result<(), Vulcan
                 .build_register_trader(authority, pda_index, subaccount_index)
                 .map_err(|e| VulcanError::api("BUILD_REGISTER_FAILED", e.to_string()))?;
 
-            let wallet = if let Some(sw) = &ctx.session_wallet {
-                sw.to_wallet()?
-            } else {
-                let wallet_file = ctx
-                    .wallet_store
-                    .load(&wallet_name)
-                    .map_err(|e| VulcanError::auth("WALLET_NOT_FOUND", e.to_string()))?;
-                let password = crate::commands::trade::prompt_password()?;
-                crate::wallet::Wallet::decrypt(&wallet_file.encrypted, &password)
-                    .map_err(|e| VulcanError::auth("DECRYPT_FAILED", e.to_string()))?
-            };
+            let (wallet, _, _) =
+                crate::commands::trade::resolve_wallet_and_pda(ctx, Some(&wallet_name)).await?;
 
             let sig = crate::commands::trade::send_or_dry_run(ctx, ixs, &wallet).await?;
 
@@ -411,17 +402,8 @@ async fn register_authority(
                 .build_register_trader(authority, 0, 0)
                 .map_err(|e| VulcanError::api("BUILD_REGISTER_FAILED", e.to_string()))?;
 
-            let wallet = if let Some(sw) = &ctx.session_wallet {
-                sw.to_wallet()?
-            } else {
-                let wallet_file = ctx
-                    .wallet_store
-                    .load(wallet_name)
-                    .map_err(|e| VulcanError::auth("WALLET_NOT_FOUND", e.to_string()))?;
-                let password = crate::commands::trade::prompt_password()?;
-                crate::wallet::Wallet::decrypt(&wallet_file.encrypted, &password)
-                    .map_err(|e| VulcanError::auth("DECRYPT_FAILED", e.to_string()))?
-            };
+            let (wallet, _, _) =
+                crate::commands::trade::resolve_wallet_and_pda(ctx, Some(wallet_name)).await?;
 
             match crate::commands::trade::send_or_dry_run(ctx, ixs, &wallet).await {
                 Ok(sig) => sig,

@@ -790,10 +790,13 @@ impl VulcanMcpServer {
                         "vulcan_auth_login requires MCP --allow-dangerous with an unlocked session wallet",
                     ));
                 };
-                let wallet = session_wallet.to_wallet()?;
-                let wallet_name = self.ctx.wallet_store.default_wallet().ok().flatten();
-                let result =
-                    commands::auth::login_with_wallet(&self.ctx, &wallet, wallet_name).await?;
+                let wallet = session_wallet.resolved_signer();
+                let result = commands::auth::login_with_signer(
+                    &self.ctx,
+                    &wallet,
+                    Some(session_wallet.wallet_name.clone()),
+                )
+                .await?;
                 Ok(serde_json::to_value(result).unwrap())
             }
             "vulcan_auth_logout" => {

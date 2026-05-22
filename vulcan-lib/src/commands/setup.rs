@@ -282,12 +282,12 @@ fn setup_wallet(wallet_store: &WalletStore) -> Result<(String, String, Wallet), 
         .encrypt(&password)
         .map_err(|e| VulcanError::internal("ENCRYPT_FAILED", e.to_string()))?;
 
-    let wallet_file = WalletFile {
-        name: name.clone(),
-        public_key: address.clone(),
+    let wallet_file = WalletFile::local_encrypted(
+        name.clone(),
+        address.clone(),
         encrypted,
-        created_at: chrono::Utc::now().to_rfc3339(),
-    };
+        chrono::Utc::now().to_rfc3339(),
+    );
 
     wallet_store
         .save(&wallet_file)

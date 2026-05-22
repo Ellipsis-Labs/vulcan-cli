@@ -4,6 +4,10 @@ version = "0.6.2"
 edition = "2021"
 description = "Vulcan — AI-native CLI for Phoenix Perpetuals DEX on Solana"
 
+[features]
+default = []
+aws-kms-signer = ["vulcan-lib/aws-kms-signer"]
+
 [[bin]]
 name = "vulcan"
 path = "src/main.rs"

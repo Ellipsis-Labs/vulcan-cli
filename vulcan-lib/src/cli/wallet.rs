@@ -1,6 +1,6 @@
 //! Wallet subcommand definitions.
 
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Debug, Subcommand)]
@@ -88,6 +88,148 @@ pub enum WalletCommand {
         /// Wallet name (defaults to default wallet)
         name: Option<String>,
     },
+
+    /// Register provider-backed signer wallets
+    Signer {
+        #[command(subcommand)]
+        command: WalletSignerCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WalletSignerCommand {
+    /// Register a HashiCorp Vault transit signer
+    AddVault {
+        #[command(flatten)]
+        common: RemoteSignerCommon,
+        #[arg(long)]
+        vault_addr: String,
+        #[arg(long)]
+        key_name: String,
+        #[arg(long)]
+        token_env: Option<String>,
+    },
+    /// Register an AWS KMS signer
+    AddAwsKms {
+        #[command(flatten)]
+        common: RemoteSignerCommon,
+        #[arg(long)]
+        key_id: String,
+        #[arg(long)]
+        region: Option<String>,
+    },
+    /// Register a GCP KMS signer
+    AddGcpKms {
+        #[command(flatten)]
+        common: RemoteSignerCommon,
+        #[arg(long)]
+        key_name: String,
+    },
+    /// Register a Turnkey signer
+    AddTurnkey {
+        #[command(flatten)]
+        common: RemoteSignerCommon,
+        #[arg(long)]
+        organization_id: String,
+        #[arg(long)]
+        private_key_id: String,
+        #[arg(long)]
+        api_public_key_env: Option<String>,
+        #[arg(long)]
+        api_private_key_env: Option<String>,
+        #[arg(long)]
+        api_base_url: Option<String>,
+    },
+    /// Register a Privy signer
+    AddPrivy {
+        #[command(flatten)]
+        common: RemoteSignerCommon,
+        #[arg(long)]
+        wallet_id: String,
+        #[arg(long)]
+        app_id_env: Option<String>,
+        #[arg(long)]
+        app_secret_env: Option<String>,
+        #[arg(long)]
+        api_base_url: Option<String>,
+    },
+    /// Register a Coinbase Developer Platform signer
+    AddCdp {
+        #[command(flatten)]
+        common: RemoteSignerCommon,
+        #[arg(long)]
+        api_key_id_env: Option<String>,
+        #[arg(long)]
+        api_key_secret_env: Option<String>,
+        #[arg(long)]
+        wallet_secret_env: Option<String>,
+        #[arg(long)]
+        api_base_url: Option<String>,
+    },
+    /// Register a Para signer
+    AddPara {
+        #[command(flatten)]
+        common: RemoteSignerCommon,
+        #[arg(long)]
+        wallet_id: String,
+        #[arg(long)]
+        api_key_env: Option<String>,
+        #[arg(long)]
+        api_base_url: Option<String>,
+    },
+    /// Register a Crossmint signer
+    AddCrossmint {
+        #[command(flatten)]
+        common: RemoteSignerCommon,
+        #[arg(long)]
+        wallet_locator: String,
+        #[arg(long)]
+        api_key_env: Option<String>,
+        #[arg(long)]
+        signer_secret_env: Option<String>,
+        #[arg(long)]
+        signer: Option<String>,
+        #[arg(long)]
+        api_base_url: Option<String>,
+    },
+    /// Register a Dfns signer
+    AddDfns {
+        #[command(flatten)]
+        common: RemoteSignerCommon,
+        #[arg(long)]
+        auth_token_env: Option<String>,
+        #[arg(long)]
+        cred_id: String,
+        #[arg(long)]
+        private_key_pem_env: Option<String>,
+        #[arg(long)]
+        wallet_id: String,
+        #[arg(long)]
+        api_base_url: Option<String>,
+    },
+    /// Register an Openfort backend wallet signer
+    AddOpenfort {
+        #[command(flatten)]
+        common: RemoteSignerCommon,
+        #[arg(long)]
+        account_id: String,
+        #[arg(long)]
+        secret_key_env: Option<String>,
+        #[arg(long)]
+        wallet_secret_env: Option<String>,
+        #[arg(long)]
+        api_base_url: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct RemoteSignerCommon {
+    /// Wallet record name
+    #[arg(long)]
+    pub name: String,
+    /// Base58 Solana public key controlled by the signer provider
+    #[arg(long)]
+    pub public_key: String,
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]
@@ -110,7 +252,7 @@ pub enum PrivateKeyExportFormat {
 
 #[cfg(test)]
 mod tests {
-    use super::{PrivateKeyExportFormat, WalletCommand};
+    use super::{PrivateKeyExportFormat, WalletCommand, WalletSignerCommand};
     use crate::cli::{Cli, Command};
     use crate::output::OutputFormat;
     use clap::Parser;
@@ -201,6 +343,45 @@ mod tests {
                 assert!(private_key);
                 assert!(matches!(private_key_format, PrivateKeyExportFormat::Bytes));
                 assert!(!force);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn signer_add_vault_parses() {
+        let cli = Cli::parse_from([
+            "vulcan",
+            "wallet",
+            "signer",
+            "add-vault",
+            "--name",
+            "vault-main",
+            "--public-key",
+            "11111111111111111111111111111111",
+            "--vault-addr",
+            "https://vault.example.com",
+            "--key-name",
+            "solana-main",
+            "--token-env",
+            "VAULT_TOKEN",
+        ]);
+
+        match cli.command {
+            Command::Wallet(WalletCommand::Signer {
+                command:
+                    WalletSignerCommand::AddVault {
+                        common,
+                        vault_addr,
+                        key_name,
+                        token_env,
+                    },
+            }) => {
+                assert_eq!(common.name, "vault-main");
+                assert_eq!(common.public_key, "11111111111111111111111111111111");
+                assert_eq!(vault_addr, "https://vault.example.com");
+                assert_eq!(key_name, "solana-main");
+                assert_eq!(token_env.as_deref(), Some("VAULT_TOKEN"));
             }
             other => panic!("unexpected command: {other:?}"),
         }

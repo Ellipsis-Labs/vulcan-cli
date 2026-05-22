@@ -181,7 +181,9 @@ async fn build_twap_config(
         ));
     }
     if matches!(mode, StrategyMode::ConfirmEach | StrategyMode::AutoExecute) && !ctx.dry_run {
-        crate::commands::trade::resolve_wallet_and_pda(ctx, None).map_err(|err| {
+        crate::commands::trade::resolve_wallet_and_pda(ctx, None)
+            .await
+            .map_err(|err| {
             if err.code == "WALLET_PASSWORD_REQUIRED" {
                 VulcanError::auth(
                     "WALLET_PASSWORD_REQUIRED",

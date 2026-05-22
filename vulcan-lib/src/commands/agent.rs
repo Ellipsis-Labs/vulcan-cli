@@ -2109,6 +2109,13 @@ fn resolve_mcp_wallet_switch_secret(
             password: crate::secrets::SecretString::new(String::new()),
         });
     }
+    if !wallet_file.is_local_encrypted() {
+        return Ok(McpInstallSecret {
+            wallet_name: wallet_name.to_string(),
+            wallet_address: wallet_file.public_key,
+            password: crate::secrets::SecretString::new(String::new()),
+        });
+    }
 
     use std::io::IsTerminal;
     if !io::stdin().is_terminal() {
@@ -2123,7 +2130,7 @@ fn resolve_mcp_wallet_switch_secret(
         .map_err(|e| VulcanError::io("FLUSH_FAILED", e.to_string()))?;
     let password = rpassword::read_password()
         .map_err(|e| VulcanError::io("PASSWORD_READ_FAILED", e.to_string()))?;
-    crate::wallet::Wallet::decrypt(&wallet_file.encrypted, &password)
+    crate::wallet::Wallet::decrypt(wallet_file.encrypted_data()?, &password)
         .map_err(|e| VulcanError::auth("DECRYPT_FAILED", e.to_string()))?;
 
     Ok(McpInstallSecret {
@@ -2418,13 +2425,20 @@ fn resolve_mcp_install_secret(
         .wallet_store
         .load(&wallet_name)
         .map_err(|e| VulcanError::auth("WALLET_NOT_FOUND", e.to_string()))?;
+    if !wallet_file.is_local_encrypted() {
+        return Ok(Some(McpInstallSecret {
+            wallet_name,
+            wallet_address: wallet_file.public_key,
+            password: crate::secrets::SecretString::new(String::new()),
+        }));
+    }
     eprint!("Wallet password for '{}': ", wallet_name);
     io::stderr()
         .flush()
         .map_err(|e| VulcanError::io("FLUSH_FAILED", e.to_string()))?;
     let password = rpassword::read_password()
         .map_err(|e| VulcanError::io("PASSWORD_READ_FAILED", e.to_string()))?;
-    crate::wallet::Wallet::decrypt(&wallet_file.encrypted, &password)
+    crate::wallet::Wallet::decrypt(wallet_file.encrypted_data()?, &password)
         .map_err(|e| VulcanError::auth("DECRYPT_FAILED", e.to_string()))?;
 
     Ok(Some(McpInstallSecret {
