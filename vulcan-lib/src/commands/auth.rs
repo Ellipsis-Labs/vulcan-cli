@@ -5,7 +5,7 @@ use crate::cli::auth::AuthCommand;
 use crate::context::AppContext;
 use crate::error::VulcanError;
 use crate::output::{render_success, TableRenderable};
-use crate::wallet::Wallet;
+use crate::wallet::{ResolvedSigner, Wallet};
 use chrono::Utc;
 use phoenix_rise::{PhoenixHttpAuthConfig, PhoenixHttpClientBuilder};
 use serde::Serialize;
@@ -106,21 +106,15 @@ pub async fn execute(ctx: &AppContext, cmd: AuthCommand) -> Result<(), VulcanErr
 }
 
 pub async fn login_default_wallet(ctx: &AppContext) -> Result<ApiAuthLoginResult, VulcanError> {
-    let (wallet, _, _) = crate::commands::trade::resolve_wallet_and_pda(ctx, None)?;
-    let wallet_name = ctx.wallet_store.default_wallet().ok().flatten();
-    login_with_wallet(ctx, &wallet, wallet_name).await
+    let (wallet, _, _) = crate::commands::trade::resolve_wallet_and_pda(ctx, None).await?;
+    login_with_signer(ctx, &wallet, Some(wallet.wallet_name.clone())).await
 }
 
 pub async fn login_selected_wallet(ctx: &AppContext) -> Result<ApiAuthLoginResult, VulcanError> {
     let wallet_name = select_wallet_name(ctx)?;
-    let wallet_file = ctx
-        .wallet_store
-        .load(&wallet_name)
-        .map_err(|e| VulcanError::auth("WALLET_NOT_FOUND", e.to_string()))?;
-    let password = prompt_wallet_password(&wallet_name)?;
-    let wallet = Wallet::decrypt(&wallet_file.encrypted, &password)
-        .map_err(|e| VulcanError::auth("DECRYPT_FAILED", e.to_string()))?;
-    login_with_wallet(ctx, &wallet, Some(wallet_name)).await
+    let (wallet, _, _) =
+        crate::commands::trade::resolve_wallet_and_pda(ctx, Some(&wallet_name)).await?;
+    login_with_signer(ctx, &wallet, Some(wallet_name)).await
 }
 
 pub async fn auto_login_if_possible(ctx: &AppContext) -> ApiAuthAutoLoginResult {
@@ -136,12 +130,8 @@ pub async fn auto_login_if_possible(ctx: &AppContext) -> ApiAuthAutoLoginResult 
     }
 
     let login_result = if let Some(session_wallet) = &ctx.session_wallet {
-        match session_wallet.to_wallet() {
-            Ok(wallet) => {
-                login_with_wallet(ctx, &wallet, Some(session_wallet.wallet_name.clone())).await
-            }
-            Err(err) => Err(err),
-        }
+        let wallet = session_wallet.resolved_signer();
+        login_with_signer(ctx, &wallet, Some(session_wallet.wallet_name.clone())).await
     } else if std::env::var("VULCAN_WALLET_PASSWORD").is_ok() {
         login_selected_wallet(ctx).await
     } else {
@@ -261,27 +251,23 @@ fn select_wallet_name(ctx: &AppContext) -> Result<String, VulcanError> {
     })
 }
 
-fn prompt_wallet_password(wallet_name: &str) -> Result<String, VulcanError> {
-    if let Ok(password) = std::env::var("VULCAN_WALLET_PASSWORD") {
-        return Ok(password);
-    }
-    use std::io::IsTerminal;
-    if !io::stdin().is_terminal() {
-        return Err(VulcanError::auth(
-            "WALLET_PASSWORD_REQUIRED",
-            "Phoenix API login needs the selected wallet password. Set VULCAN_WALLET_PASSWORD for non-interactive login or run from an interactive terminal.",
-        ));
-    }
-    eprint!("Wallet password for '{}': ", wallet_name);
-    io::stderr()
-        .flush()
-        .map_err(|e| VulcanError::io("FLUSH_FAILED", e.to_string()))?;
-    rpassword::read_password().map_err(|e| VulcanError::io("PASSWORD_READ_FAILED", e.to_string()))
-}
-
 pub async fn login_with_wallet(
     ctx: &AppContext,
     wallet: &Wallet,
+    wallet_name: Option<String>,
+) -> Result<ApiAuthLoginResult, VulcanError> {
+    let signer = ResolvedSigner::from_unlocked_wallet(
+        wallet_name
+            .clone()
+            .unwrap_or_else(|| wallet.address().to_string()),
+        wallet,
+    )?;
+    login_with_signer(ctx, &signer, wallet_name).await
+}
+
+pub async fn login_with_signer(
+    ctx: &AppContext,
+    wallet: &ResolvedSigner,
     wallet_name: Option<String>,
 ) -> Result<ApiAuthLoginResult, VulcanError> {
     let auth_config = PhoenixHttpAuthConfig::new()
@@ -298,20 +284,27 @@ pub async fn login_with_wallet(
         )
     })?;
     let nonce = auth_client
-        .get_wallet_nonce(wallet.address())
+        .get_wallet_nonce(&wallet.public_key)
         .await
         .map_err(|e| VulcanError::api("API_AUTH_NONCE_FAILED", e.to_string()))?;
-    let signature = wallet
-        .sign(nonce.message.as_bytes())
+
+    let signer = wallet.signer()?;
+    let signature = signer
+        .sign_message(nonce.message.as_bytes())
+        .await
         .map_err(|e| VulcanError::auth("API_AUTH_SIGN_FAILED", e.to_string()))?;
     auth_client
-        .login_with_wallet_signature(wallet.address(), signature, nonce.nonce_id)
+        .login_with_wallet_signature(
+            &wallet.public_key,
+            signature.as_ref().to_vec(),
+            nonce.nonce_id,
+        )
         .await
         .map_err(|e| VulcanError::auth("API_AUTH_LOGIN_FAILED", e.to_string()))?;
     auth::store_metadata(
         &ctx.vulcan_dir,
         &ApiAuthMetadata {
-            wallet: Some(wallet.address().to_string()),
+            wallet: Some(wallet.public_key.clone()),
             wallet_name,
             logged_in_at: Some(Utc::now().to_rfc3339()),
         },

@@ -210,7 +210,7 @@ pub async fn execute_deposit_withdraw_inner(
     is_deposit: bool,
 ) -> Result<DepositWithdrawResult, VulcanError> {
     let (wallet, authority, trader_pda) =
-        crate::commands::trade::resolve_wallet_and_pda(ctx, None)?;
+        crate::commands::trade::resolve_wallet_and_pda(ctx, None).await?;
 
     let builder = ctx.tx_builder().await?;
 
@@ -243,7 +243,7 @@ pub async fn execute_transfer_inner(
     from: u8,
     to: u8,
 ) -> Result<TransferResult, VulcanError> {
-    let (wallet, authority, _) = crate::commands::trade::resolve_wallet_and_pda(ctx, None)?;
+    let (wallet, authority, _) = crate::commands::trade::resolve_wallet_and_pda(ctx, None).await?;
     let builder = ctx.tx_builder().await?;
 
     let src_pda = phoenix_rise::types::TraderKey::derive_pda(&authority, 0, from);
@@ -270,7 +270,7 @@ pub async fn execute_transfer_child_to_parent_inner(
     ctx: &AppContext,
     child: u8,
 ) -> Result<SweepResult, VulcanError> {
-    let (wallet, authority, _) = crate::commands::trade::resolve_wallet_and_pda(ctx, None)?;
+    let (wallet, authority, _) = crate::commands::trade::resolve_wallet_and_pda(ctx, None).await?;
     let builder = ctx.tx_builder().await?;
 
     let child_pda = phoenix_rise::types::TraderKey::derive_pda(&authority, 0, child);
@@ -296,7 +296,7 @@ pub async fn execute_sync_parent_to_child_inner(
     ctx: &AppContext,
     child: u8,
 ) -> Result<SweepResult, VulcanError> {
-    let (wallet, authority, _) = crate::commands::trade::resolve_wallet_and_pda(ctx, None)?;
+    let (wallet, authority, _) = crate::commands::trade::resolve_wallet_and_pda(ctx, None).await?;
     let builder = ctx.tx_builder().await?;
 
     let parent_pda = phoenix_rise::types::TraderKey::derive_pda(&authority, 0, 0);
@@ -326,7 +326,7 @@ pub async fn execute_add_collateral_inner(
     let symbol_upper = symbol.to_ascii_uppercase();
 
     // Fetch all trader views to find the isolated subaccount for this symbol
-    let (wallet, authority, _) = crate::commands::trade::resolve_wallet_and_pda(ctx, None)?;
+    let (wallet, authority, _) = crate::commands::trade::resolve_wallet_and_pda(ctx, None).await?;
 
     let traders = ctx
         .http_client

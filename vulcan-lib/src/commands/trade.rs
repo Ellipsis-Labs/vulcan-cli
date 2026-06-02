@@ -4,6 +4,7 @@ use crate::cli::trade::TradeCommand;
 use crate::context::AppContext;
 use crate::error::VulcanError;
 use crate::output::{render_success, TableRenderable};
+use crate::wallet::ResolvedSigner;
 use phoenix_rise::math::{SignedQuoteLots, WrapperNum};
 use phoenix_rise::types::trader_state::LimitOrder as SdkLimitOrder;
 use phoenix_rise::types::{
@@ -11,8 +12,8 @@ use phoenix_rise::types::{
 };
 use phoenix_rise::{BracketLeg, BracketLegOrders, BracketLegSize, IsolatedCollateralFlow, Side};
 use serde::Serialize;
+use solana_keychain::SignTransactionResult;
 use solana_pubkey::Pubkey;
-use solana_sdk::signer::Signer;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -306,13 +307,13 @@ pub fn prompt_password() -> Result<String, VulcanError> {
 /// Resolve the wallet and trader PDA for trading commands.
 /// If a session wallet is available (MCP mode), use it directly.
 /// Per-call `wallet_override` wins over the global CLI `--wallet` flag, which wins over the default wallet.
-pub fn resolve_wallet_and_pda(
+pub async fn resolve_wallet_and_pda(
     ctx: &AppContext,
     wallet_override: Option<&str>,
-) -> Result<(crate::wallet::Wallet, Pubkey, Pubkey), VulcanError> {
+) -> Result<(ResolvedSigner, Pubkey, Pubkey), VulcanError> {
     // MCP session wallet path — no password prompt needed
     if let Some(sw) = &ctx.session_wallet {
-        let wallet = sw.to_wallet()?;
+        let wallet = sw.resolved_signer();
         return Ok((wallet, sw.authority, sw.trader_pda));
     }
 
@@ -360,22 +361,18 @@ pub fn resolve_wallet_and_pda(
     let trader_pda = trader_key.pda();
 
     if ctx.dry_run {
-        let wallet = dry_run_wallet_for_authority(authority)?;
+        let wallet = ResolvedSigner::dry_run(wallet_name, authority);
         return Ok((wallet, authority, trader_pda));
     }
 
-    let password = prompt_password()?;
-    let wallet = crate::wallet::Wallet::decrypt(&wallet_file.encrypted, &password)
-        .map_err(|e| VulcanError::auth("DECRYPT_FAILED", e.to_string()))?;
+    let password = if wallet_file.is_local_encrypted() {
+        Some(prompt_password()?)
+    } else {
+        None
+    };
+    let wallet = ResolvedSigner::from_wallet_file(&wallet_file, password.as_deref()).await?;
 
     Ok((wallet, authority, trader_pda))
-}
-
-fn dry_run_wallet_for_authority(authority: Pubkey) -> Result<crate::wallet::Wallet, VulcanError> {
-    let mut keypair_bytes = vec![0u8; 64];
-    keypair_bytes[32..64].copy_from_slice(authority.as_ref());
-    crate::wallet::Wallet::from_bytes(&keypair_bytes)
-        .map_err(|e| VulcanError::internal("DRY_RUN_WALLET_FAILED", e.to_string()))
 }
 
 /// Resolve the active authority pubkey (no decryption needed).
@@ -540,7 +537,7 @@ pub const MAX_CU_LIMIT: u32 = 1_400_000;
 pub async fn send_or_dry_run(
     ctx: &AppContext,
     ixs: Vec<solana_sdk::instruction::Instruction>,
-    wallet: &crate::wallet::Wallet,
+    wallet: &ResolvedSigner,
 ) -> Result<Option<String>, VulcanError> {
     send_or_dry_run_with_cu_limit(ctx, ixs, wallet, DEFAULT_CU_LIMIT).await
 }
@@ -551,16 +548,14 @@ pub async fn send_or_dry_run(
 pub async fn send_or_dry_run_with_cu_limit(
     ctx: &AppContext,
     ixs: Vec<solana_sdk::instruction::Instruction>,
-    wallet: &crate::wallet::Wallet,
+    wallet: &ResolvedSigner,
     cu_limit: u32,
 ) -> Result<Option<String>, VulcanError> {
     if ctx.dry_run {
         return Ok(None);
     }
 
-    let keypair = wallet
-        .to_solana_keypair()
-        .map_err(|e| VulcanError::auth("KEYPAIR_ERROR", e.to_string()))?;
+    let signer = wallet.signer()?;
 
     let rpc_client = ctx.rpc_client();
 
@@ -575,12 +570,31 @@ pub async fn send_or_dry_run_with_cu_limit(
     );
     all_ixs.extend(ixs);
 
-    let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
-        &all_ixs,
-        Some(&keypair.pubkey()),
-        &[&keypair],
-        recent_blockhash,
-    );
+    let fee_payer = signer.pubkey();
+    if fee_payer != wallet.authority {
+        return Err(VulcanError::auth(
+            "SIGNER_PUBKEY_MISMATCH",
+            format!(
+                "Signer pubkey {} does not match active wallet authority {}",
+                fee_payer, wallet.authority
+            ),
+        ));
+    }
+
+    let mut tx = solana_sdk::transaction::Transaction::new_with_payer(&all_ixs, Some(&fee_payer));
+    tx.message.recent_blockhash = recent_blockhash;
+
+    let signed = signer
+        .sign_transaction(&mut tx)
+        .await
+        .map_err(|e| VulcanError::auth("TX_SIGN_FAILED", e.to_string()))?;
+
+    if matches!(signed, SignTransactionResult::Partial(_)) {
+        return Err(VulcanError::auth(
+            "PARTIAL_SIGNATURE",
+            "Transaction was only partially signed; Vulcan live transactions currently require one complete signer.",
+        ));
+    }
 
     let sig = rpc_client
         .send_and_confirm_transaction(&tx)
@@ -1044,7 +1058,7 @@ pub async fn execute_market_order_inner(
     collateral: Option<f64>,
     _reduce_only: bool,
 ) -> Result<OrderResult, VulcanError> {
-    let (wallet, authority, trader_pda) = resolve_wallet_and_pda(ctx, None)?;
+    let (wallet, authority, trader_pda) = resolve_wallet_and_pda(ctx, None).await?;
     let builder = ctx.tx_builder().await?;
     let num_base_lots = size as u64;
 
@@ -1216,7 +1230,7 @@ pub async fn execute_limit_order_inner(
     collateral: Option<f64>,
     _reduce_only: bool,
 ) -> Result<OrderResult, VulcanError> {
-    let (wallet, authority, trader_pda) = resolve_wallet_and_pda(ctx, None)?;
+    let (wallet, authority, trader_pda) = resolve_wallet_and_pda(ctx, None).await?;
     let builder = ctx.tx_builder().await?;
     let num_base_lots = size as u64;
 
@@ -1329,7 +1343,7 @@ pub async fn execute_multi_limit_order_inner(
     asks: Vec<MultiLimitLeg>,
     slide: bool,
 ) -> Result<MultiLimitOrderResult, VulcanError> {
-    let (wallet, authority, trader_pda) = resolve_wallet_and_pda(ctx, None)?;
+    let (wallet, authority, trader_pda) = resolve_wallet_and_pda(ctx, None).await?;
     let builder = ctx.tx_builder().await?;
 
     let metadata = ctx.metadata().await?;
@@ -1612,7 +1626,7 @@ pub async fn execute_cancel_inner(
     symbol: &str,
     order_ids: Vec<String>,
 ) -> Result<CancelResult, VulcanError> {
-    let (wallet, authority, trader_pda) = resolve_wallet_and_pda(ctx, None)?;
+    let (wallet, authority, trader_pda) = resolve_wallet_and_pda(ctx, None).await?;
     let symbol_upper = symbol.to_ascii_uppercase();
 
     let selection = match api_limit_order_cancel_selection(
@@ -1685,7 +1699,7 @@ pub async fn execute_cancel_all_inner(
     ctx: &AppContext,
     symbol: &str,
 ) -> Result<CancelResult, VulcanError> {
-    let (wallet, authority, trader_pda) = resolve_wallet_and_pda(ctx, None)?;
+    let (wallet, authority, trader_pda) = resolve_wallet_and_pda(ctx, None).await?;
     let symbol_upper = symbol.to_ascii_uppercase();
 
     let selection =
@@ -2044,7 +2058,7 @@ pub async fn execute_set_tpsl_inner(
         ));
     }
 
-    let (wallet, authority, _) = resolve_wallet_and_pda(ctx, None)?;
+    let (wallet, authority, _) = resolve_wallet_and_pda(ctx, None).await?;
     let symbol_upper = symbol.to_ascii_uppercase();
 
     // Fetch trader state to detect position side
@@ -2234,7 +2248,7 @@ pub async fn execute_cancel_tpsl_inner(
         ));
     }
 
-    let (wallet, authority, _) = resolve_wallet_and_pda(ctx, None)?;
+    let (wallet, authority, _) = resolve_wallet_and_pda(ctx, None).await?;
     let symbol_upper = symbol.to_ascii_uppercase();
 
     let traders = ctx

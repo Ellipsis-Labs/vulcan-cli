@@ -1,11 +1,12 @@
 //! Wallet command execution.
 
-use crate::cli::wallet::{ImportFormat, PrivateKeyExportFormat, WalletCommand};
+use crate::cli::wallet::{
+    ImportFormat, PrivateKeyExportFormat, RemoteSignerCommon, WalletCommand, WalletSignerCommand,
+};
 use crate::context::AppContext;
 use crate::error::{ErrorCategory, VulcanError};
 use crate::output::{render_success, TableRenderable};
-use crate::wallet::Wallet;
-use crate::wallet::WalletFile;
+use crate::wallet::{Wallet, WalletFile, WalletSignerConfig};
 use serde::Serialize;
 use solana_pubkey::Pubkey;
 use zeroize::Zeroize;
@@ -23,6 +24,7 @@ fn spl_associated_token_address(wallet: &Pubkey, mint: &Pubkey) -> Pubkey {
 pub struct WalletInfo {
     pub name: String,
     pub public_key: String,
+    pub signer_type: String,
     pub is_default: bool,
 }
 
@@ -36,10 +38,11 @@ pub struct WalletAddress {
 impl TableRenderable for WalletInfo {
     fn render_table(&self) {
         crate::output::table::render_table(
-            &["Name", "Public Key", "Default"],
+            &["Name", "Public Key", "Signer", "Default"],
             vec![vec![
                 self.name.clone(),
                 self.public_key.clone(),
+                self.signer_type.clone(),
                 if self.is_default {
                     "yes".into()
                 } else {
@@ -68,6 +71,7 @@ impl TableRenderable for WalletList {
                 vec![
                     w.name.clone(),
                     w.public_key.clone(),
+                    w.signer_type.clone(),
                     if w.is_default {
                         "yes".into()
                     } else {
@@ -76,7 +80,7 @@ impl TableRenderable for WalletList {
                 ]
             })
             .collect();
-        crate::output::table::render_table(&["Name", "Public Key", "Default"], rows);
+        crate::output::table::render_table(&["Name", "Public Key", "Signer", "Default"], rows);
     }
 }
 
@@ -223,12 +227,12 @@ pub async fn execute(ctx: &AppContext, cmd: WalletCommand) -> Result<(), VulcanE
                 .encrypt(&password)
                 .map_err(|e| VulcanError::internal("ENCRYPT_FAILED", e.to_string()))?;
 
-            let wallet_file = WalletFile {
-                name: name.clone(),
-                public_key: wallet.public_key.clone(),
+            let wallet_file = WalletFile::local_encrypted(
+                name.clone(),
+                wallet.public_key.clone(),
                 encrypted,
-                created_at: chrono::Utc::now().to_rfc3339(),
-            };
+                chrono::Utc::now().to_rfc3339(),
+            );
 
             ctx.wallet_store.save(&wallet_file).map_err(|e| {
                 VulcanError::new(
@@ -260,15 +264,19 @@ pub async fn execute(ctx: &AppContext, cmd: WalletCommand) -> Result<(), VulcanE
             let wallets: Vec<WalletInfo> = names
                 .into_iter()
                 .map(|name| {
-                    let public_key = ctx
+                    let (public_key, signer_type) = ctx
                         .wallet_store
                         .load(&name)
-                        .map(|f| f.public_key)
-                        .unwrap_or_else(|_| "???".into());
+                        .map(|f| {
+                            let signer_type = f.signer_kind().to_string();
+                            (f.public_key, signer_type)
+                        })
+                        .unwrap_or_else(|_| ("???".into(), "unknown".into()));
                     let is_default = default_name.as_deref() == Some(&name);
                     WalletInfo {
                         name,
                         public_key,
+                        signer_type,
                         is_default,
                     }
                 })
@@ -289,6 +297,7 @@ pub async fn execute(ctx: &AppContext, cmd: WalletCommand) -> Result<(), VulcanE
 
             let result = WalletInfo {
                 name,
+                signer_type: wallet_file.signer_kind().to_string(),
                 public_key: wallet_file.public_key,
                 is_default,
             };
@@ -391,8 +400,19 @@ pub async fn execute(ctx: &AppContext, cmd: WalletCommand) -> Result<(), VulcanE
                 };
 
             let (private_key_value, private_key_format_value) = if private_key {
+                if !wallet_file.is_local_encrypted() {
+                    return Err(VulcanError::new(
+                        ErrorCategory::DangerousGate,
+                        "PRIVATE_KEY_EXPORT_UNSUPPORTED",
+                        format!(
+                            "Plaintext private-key export is only available for local encrypted wallets; '{}' uses signer type '{}'.",
+                            wallet_file.name,
+                            wallet_file.signer_kind()
+                        ),
+                    ));
+                }
                 let password = crate::commands::trade::prompt_password()?;
-                let wallet = Wallet::decrypt(&wallet_file.encrypted, &password)
+                let wallet = Wallet::decrypt(wallet_file.encrypted_data()?, &password)
                     .map_err(|e| VulcanError::auth("DECRYPT_FAILED", e.to_string()))?;
                 let (value, format) = match private_key_format {
                     PrivateKeyExportFormat::Base58 => (
@@ -462,7 +482,199 @@ pub async fn execute(ctx: &AppContext, cmd: WalletCommand) -> Result<(), VulcanE
             render_success(ctx.output_format, &result, serde_json::Value::Null);
             Ok(())
         }
+
+        WalletCommand::Signer { command } => {
+            let result = execute_signer_command(ctx, command)?;
+            render_success(ctx.output_format, &result, serde_json::Value::Null);
+            Ok(())
+        }
     }
+}
+
+fn execute_signer_command(
+    ctx: &AppContext,
+    command: WalletSignerCommand,
+) -> Result<WalletCreated, VulcanError> {
+    match command {
+        WalletSignerCommand::AddVault {
+            common,
+            vault_addr,
+            key_name,
+            token_env,
+        } => save_remote_signer(
+            ctx,
+            common,
+            WalletSignerConfig::Vault {
+                vault_addr,
+                token_env: env_or_default(token_env, "VAULT_TOKEN"),
+                key_name,
+            },
+        ),
+        WalletSignerCommand::AddAwsKms {
+            common,
+            key_id,
+            region,
+        } => save_remote_signer(ctx, common, WalletSignerConfig::AwsKms { key_id, region }),
+        WalletSignerCommand::AddGcpKms { common, key_name } => {
+            save_remote_signer(ctx, common, WalletSignerConfig::GcpKms { key_name })
+        }
+        WalletSignerCommand::AddTurnkey {
+            common,
+            organization_id,
+            private_key_id,
+            api_public_key_env,
+            api_private_key_env,
+            api_base_url,
+        } => save_remote_signer(
+            ctx,
+            common,
+            WalletSignerConfig::Turnkey {
+                api_public_key_env: env_or_default(api_public_key_env, "TURNKEY_API_PUBLIC_KEY"),
+                api_private_key_env: env_or_default(api_private_key_env, "TURNKEY_API_PRIVATE_KEY"),
+                organization_id,
+                private_key_id,
+                api_base_url,
+            },
+        ),
+        WalletSignerCommand::AddPrivy {
+            common,
+            wallet_id,
+            app_id_env,
+            app_secret_env,
+            api_base_url,
+        } => save_remote_signer(
+            ctx,
+            common,
+            WalletSignerConfig::Privy {
+                app_id_env: env_or_default(app_id_env, "PRIVY_APP_ID"),
+                app_secret_env: env_or_default(app_secret_env, "PRIVY_APP_SECRET"),
+                wallet_id,
+                api_base_url,
+            },
+        ),
+        WalletSignerCommand::AddCdp {
+            common,
+            api_key_id_env,
+            api_key_secret_env,
+            wallet_secret_env,
+            api_base_url,
+        } => save_remote_signer(
+            ctx,
+            common,
+            WalletSignerConfig::Cdp {
+                api_key_id_env: env_or_default(api_key_id_env, "CDP_API_KEY_ID"),
+                api_key_secret_env: env_or_default(api_key_secret_env, "CDP_API_KEY_SECRET"),
+                wallet_secret_env: env_or_default(wallet_secret_env, "CDP_WALLET_SECRET"),
+                api_base_url,
+            },
+        ),
+        WalletSignerCommand::AddPara {
+            common,
+            wallet_id,
+            api_key_env,
+            api_base_url,
+        } => save_remote_signer(
+            ctx,
+            common,
+            WalletSignerConfig::Para {
+                api_key_env: env_or_default(api_key_env, "PARA_API_KEY"),
+                wallet_id,
+                api_base_url,
+            },
+        ),
+        WalletSignerCommand::AddCrossmint {
+            common,
+            wallet_locator,
+            api_key_env,
+            signer_secret_env,
+            signer,
+            api_base_url,
+        } => save_remote_signer(
+            ctx,
+            common,
+            WalletSignerConfig::Crossmint {
+                api_key_env: env_or_default(api_key_env, "CROSSMINT_API_KEY"),
+                wallet_locator,
+                signer_secret_env,
+                signer,
+                api_base_url,
+            },
+        ),
+        WalletSignerCommand::AddDfns {
+            common,
+            auth_token_env,
+            cred_id,
+            private_key_pem_env,
+            wallet_id,
+            api_base_url,
+        } => save_remote_signer(
+            ctx,
+            common,
+            WalletSignerConfig::Dfns {
+                auth_token_env: env_or_default(auth_token_env, "DFNS_AUTH_TOKEN"),
+                cred_id,
+                private_key_pem_env: env_or_default(private_key_pem_env, "DFNS_PRIVATE_KEY_PEM"),
+                wallet_id,
+                api_base_url,
+            },
+        ),
+        WalletSignerCommand::AddOpenfort {
+            common,
+            account_id,
+            secret_key_env,
+            wallet_secret_env,
+            api_base_url,
+        } => save_remote_signer(
+            ctx,
+            common,
+            WalletSignerConfig::Openfort {
+                secret_key_env: env_or_default(secret_key_env, "OPENFORT_SECRET_KEY"),
+                account_id,
+                wallet_secret_env: env_or_default(wallet_secret_env, "OPENFORT_WALLET_SECRET"),
+                api_base_url,
+            },
+        ),
+    }
+}
+
+fn save_remote_signer(
+    ctx: &AppContext,
+    common: RemoteSignerCommon,
+    signer: WalletSignerConfig,
+) -> Result<WalletCreated, VulcanError> {
+    if ctx.wallet_store.exists(&common.name) {
+        return Err(VulcanError::validation(
+            "WALLET_EXISTS",
+            format!("Wallet '{}' already exists", common.name),
+        ));
+    }
+    let public_key = common.public_key.trim().to_string();
+    Pubkey::try_from(public_key.as_str())
+        .map_err(|e| VulcanError::validation("INVALID_PUBKEY", e.to_string()))?;
+
+    let wallet_file = WalletFile::remote(
+        common.name.clone(),
+        public_key.clone(),
+        signer,
+        chrono::Utc::now().to_rfc3339(),
+    );
+
+    ctx.wallet_store.save(&wallet_file).map_err(|e| {
+        VulcanError::new(
+            crate::error::ErrorCategory::Io,
+            "SAVE_FAILED",
+            e.to_string(),
+        )
+    })?;
+
+    Ok(WalletCreated {
+        name: common.name,
+        public_key,
+    })
+}
+
+fn env_or_default(value: Option<String>, default: &str) -> String {
+    value.unwrap_or_else(|| default.to_string())
 }
 
 // ── Inner functions for MCP ────────────────────────────────────────────
@@ -481,15 +693,19 @@ pub fn execute_list_inner(ctx: &AppContext) -> Result<WalletList, VulcanError> {
     let wallets: Vec<WalletInfo> = names
         .into_iter()
         .map(|name| {
-            let public_key = ctx
+            let (public_key, signer_type) = ctx
                 .wallet_store
                 .load(&name)
-                .map(|f| f.public_key)
-                .unwrap_or_else(|_| "???".into());
+                .map(|f| {
+                    let signer_type = f.signer_kind().to_string();
+                    (f.public_key, signer_type)
+                })
+                .unwrap_or_else(|_| ("???".into(), "unknown".into()));
             let is_default = default_name.as_deref() == Some(&name);
             WalletInfo {
                 name,
                 public_key,
+                signer_type,
                 is_default,
             }
         })
@@ -517,12 +733,12 @@ pub fn execute_create_inner(
         .encrypt(password)
         .map_err(|e| VulcanError::internal("ENCRYPT_FAILED", e.to_string()))?;
 
-    let wallet_file = WalletFile {
-        name: name.to_string(),
-        public_key: wallet.public_key.clone(),
+    let wallet_file = WalletFile::local_encrypted(
+        name.to_string(),
+        wallet.public_key.clone(),
         encrypted,
-        created_at: chrono::Utc::now().to_rfc3339(),
-    };
+        chrono::Utc::now().to_rfc3339(),
+    );
 
     ctx.wallet_store.save(&wallet_file).map_err(|e| {
         VulcanError::new(

@@ -405,47 +405,24 @@ async fn run_mcp(
 
     // Unlock session wallet if dangerous tools are enabled
     if allow_dangerous {
-        // Plugin hosts (Claude Code's `userConfig`, etc.) pass an empty string when the
-        // user leaves a sensitive field blank. Treat that the same as unset: fall
-        // through to the interactive prompt for human-driven runs, or fail with a
-        // clear error for MCP-stdio runs where there's nothing to prompt.
-        let password = match std::env::var("VULCAN_WALLET_PASSWORD")
-            .ok()
-            .filter(|p| !p.is_empty() && p != "your-password")
-        {
-            Some(pw) => pw,
-            None => {
-                use std::io::IsTerminal;
-                if !std::io::stdin().is_terminal() {
-                    return Err(VulcanError::auth(
-                        "WALLET_PASSWORD_REQUIRED",
-                        "Live MCP session needs a wallet password but VULCAN_WALLET_PASSWORD is unset or empty. \
-                         If you installed Vulcan as a plugin (Claude Code marketplace), fill in the `Wallet password` field \
-                         in the plugin's settings UI — the host stores it in your OS keychain and passes it in here. \
-                         For manual MCP setups, set VULCAN_WALLET_PASSWORD in the MCP server's env block.",
-                    ));
-                }
-                eprint!("Wallet password (for MCP session): ");
-                rpassword::read_password()
-                    .map_err(|e| VulcanError::io("PASSWORD_READ_FAILED", e.to_string()))?
-            }
-        };
-
         let wallet_name = match std::env::var("VULCAN_WALLET_NAME")
             .ok()
             .filter(|name| !name.trim().is_empty() && name != "your-wallet")
         {
             Some(name) => name,
-            None => mcp_ctx
+            None => match mcp_ctx
                 .wallet_store
                 .default_wallet()
                 .map_err(|e| VulcanError::config("CONFIG_ERROR", e.to_string()))?
-                .ok_or_else(|| {
-                    VulcanError::config(
+            {
+                Some(name) => name,
+                None => {
+                    return Err(VulcanError::config(
                         "NO_DEFAULT_WALLET",
                         "No wallet selected for MCP. Set VULCAN_WALLET_NAME or use 'vulcan wallet set-default <NAME>'",
-                    )
-                })?,
+                    ));
+                }
+            },
         };
 
         let wallet_file = mcp_ctx
@@ -453,11 +430,38 @@ async fn run_mcp(
             .load(&wallet_name)
             .map_err(|e| VulcanError::auth("WALLET_NOT_FOUND", e.to_string()))?;
 
-        let wallet = vulcan_lib::wallet::Wallet::decrypt(&wallet_file.encrypted, &password)
-            .map_err(|e| VulcanError::auth("DECRYPT_FAILED", e.to_string()))?;
+        // Plugin hosts (Claude Code's `userConfig`, etc.) pass an empty string when the
+        // user leaves a sensitive field blank. Treat that the same as unset: fall
+        // through to the interactive prompt for human-driven runs, or fail with a
+        // clear error for MCP-stdio runs where there's nothing to prompt. Remote
+        // signer records do not use VULCAN_WALLET_PASSWORD; they resolve their own
+        // provider-specific env vars.
+        let password = if wallet_file.is_local_encrypted() {
+            match std::env::var("VULCAN_WALLET_PASSWORD")
+                .ok()
+                .filter(|p| !p.is_empty() && p != "your-password")
+            {
+                Some(pw) => Some(pw),
+                None => {
+                    use std::io::IsTerminal;
+                    if !std::io::stdin().is_terminal() {
+                        return Err(mcp_wallet_password_required_error());
+                    }
+                    eprint!("Wallet password (for MCP session): ");
+                    Some(
+                        rpassword::read_password()
+                            .map_err(|e| VulcanError::io("PASSWORD_READ_FAILED", e.to_string()))?,
+                    )
+                }
+            }
+        } else {
+            None
+        };
 
-        let session_wallet =
-            vulcan_lib::mcp::session_wallet::SessionWallet::new(&wallet, &wallet_file)?;
+        let signer =
+            vulcan_lib::wallet::ResolvedSigner::from_wallet_file(&wallet_file, password.as_deref())
+                .await?;
+        let session_wallet = vulcan_lib::mcp::session_wallet::SessionWallet::from_resolved(signer)?;
 
         eprintln!(
             "[mcp] Session wallet unlocked: {} ({})",
@@ -491,4 +495,14 @@ async fn run_mcp(
         .map_err(|e| VulcanError::internal("MCP_WAIT_FAILED", e.to_string()))?;
 
     Ok(())
+}
+
+fn mcp_wallet_password_required_error() -> VulcanError {
+    VulcanError::auth(
+        "WALLET_PASSWORD_REQUIRED",
+        "Live MCP session needs a wallet password but VULCAN_WALLET_PASSWORD is unset or empty. \
+         If you installed Vulcan as a plugin (Claude Code marketplace), fill in the `Wallet password` field \
+         in the plugin's settings UI — the host stores it in your OS keychain and passes it in here. \
+         For manual MCP setups, set VULCAN_WALLET_PASSWORD in the MCP server's env block.",
+    )
 }

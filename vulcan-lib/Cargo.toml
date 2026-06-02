@@ -4,6 +4,10 @@ version = "0.6.3"
 edition = "2021"
 description = "Core library for the Vulcan CLI"
 
+[features]
+default = []
+aws-kms-signer = ["solana-keychain/aws_kms"]
+
 [dependencies]
 # Rise SDK
 phoenix-rise = { workspace = true }
@@ -24,6 +28,7 @@ reqwest = { workspace = true }
 
 # Solana
 solana-sdk        = { workspace = true }
+solana-keychain   = { workspace = true }
 solana-pubkey     = { workspace = true }
 solana-rpc-client = { workspace = true }
 

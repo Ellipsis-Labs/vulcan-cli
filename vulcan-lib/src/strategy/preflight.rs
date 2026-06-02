@@ -27,6 +27,8 @@ pub enum WalletSource {
 pub enum PasswordSource {
     /// Available via MCP session wallet — no password prompt needed.
     SessionWallet,
+    /// Provider-backed signer; credentials are provider-specific env vars.
+    RemoteSigner,
     /// Read from VULCAN_WALLET_PASSWORD env var.
     EnvVar,
     /// Not available — would require interactive prompt the agent can't answer.
@@ -37,6 +39,7 @@ pub enum PasswordSource {
 pub struct WalletInfo {
     pub name: String,
     pub address: String,
+    pub signer_type: String,
     pub source: WalletSource,
 }
 
@@ -89,8 +92,8 @@ impl TableRenderable for LiveReadiness {
         println!("─────────────────────────────────────────");
         if let Some(w) = &self.wallet {
             println!(
-                "  Wallet:        {} ({})  [source: {:?}]",
-                w.name, w.address, w.source
+                "  Wallet:        {} ({})  [signer: {}, source: {:?}]",
+                w.name, w.address, w.signer_type, w.source
             );
         } else {
             println!("  Wallet:        not resolved");
@@ -251,6 +254,33 @@ pub async fn check_live_readiness(ctx: &AppContext) -> LiveReadiness {
         });
     }
 
+    if let Some(wallet) = &wallet {
+        if let Ok(wallet_file) = ctx.wallet_store.load(&wallet.name) {
+            let missing_env: Vec<String> = wallet_file
+                .signer_config()
+                .required_env_vars()
+                .into_iter()
+                .filter(|name| {
+                    std::env::var(name)
+                        .ok()
+                        .filter(|value| !value.is_empty())
+                        .is_none()
+                })
+                .collect();
+            if !missing_env.is_empty() {
+                blockers.push(Blocker {
+                    code: "SIGNER_SECRET_ENV_MISSING",
+                    message: format!(
+                        "Signer '{}' is missing required provider secret env vars: {}",
+                        wallet.signer_type,
+                        missing_env.join(", ")
+                    ),
+                    remedy: "Export the listed env vars before launching live commands, or configure them in the MCP server environment for agent-driven signing.".to_string(),
+                });
+            }
+        }
+    }
+
     // API auth — informational. Public mode still works for reads; this just
     // tells the agent whether the higher rate budget is available.
     let api_authenticated = api_auth_active(ctx);
@@ -364,6 +394,7 @@ fn resolve_wallet_info(ctx: &AppContext) -> Option<WalletInfo> {
         return Some(WalletInfo {
             name: sw.wallet_name.clone(),
             address: sw.public_key.clone(),
+            signer_type: "mcp_session".to_string(),
             source: WalletSource::SessionWallet,
         });
     }
@@ -383,6 +414,7 @@ fn resolve_wallet_info(ctx: &AppContext) -> Option<WalletInfo> {
                 };
                 return Some(WalletInfo {
                     name: name.clone(),
+                    signer_type: wallet.signer_kind().to_string(),
                     address: wallet.public_key,
                     source,
                 });
@@ -393,6 +425,7 @@ fn resolve_wallet_info(ctx: &AppContext) -> Option<WalletInfo> {
     let wallet = ctx.wallet_store.load(&default_name).ok()?;
     Some(WalletInfo {
         name: default_name,
+        signer_type: wallet.signer_kind().to_string(),
         address: wallet.public_key,
         source: WalletSource::Default,
     })
@@ -401,6 +434,13 @@ fn resolve_wallet_info(ctx: &AppContext) -> Option<WalletInfo> {
 fn resolve_password_source(ctx: &AppContext) -> PasswordSource {
     if ctx.session_wallet.is_some() {
         return PasswordSource::SessionWallet;
+    }
+    if let Ok(wallet_name) = ctx.resolved_wallet_name(None) {
+        if let Ok(wallet_file) = ctx.wallet_store.load(&wallet_name) {
+            if !wallet_file.is_local_encrypted() {
+                return PasswordSource::RemoteSigner;
+            }
+        }
     }
     if std::env::var("VULCAN_WALLET_PASSWORD")
         .ok()

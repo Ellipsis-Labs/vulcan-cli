@@ -227,7 +227,7 @@ async fn build_grid_config(
         ));
     }
     if matches!(mode, StrategyMode::ConfirmEach | StrategyMode::AutoExecute) && !ctx.dry_run {
-        crate::commands::trade::resolve_wallet_and_pda(ctx, None)?;
+        crate::commands::trade::resolve_wallet_and_pda(ctx, None).await?;
     }
     let (info_result, ticker_result) = tokio::join!(
         market::execute_info_inner(ctx, &symbol),

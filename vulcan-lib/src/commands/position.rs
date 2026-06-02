@@ -7,7 +7,6 @@ use crate::output::{render_success, TableRenderable};
 use phoenix_rise::Side;
 use serde::Serialize;
 use solana_pubkey::Pubkey;
-use std::str::FromStr;
 
 // ── Result types ────────────────────────────────────────────────────────
 
@@ -500,20 +499,8 @@ pub async fn execute_close_inner(
     let size_str = pos.position_size.ui.clone();
     let side_closed_str = if is_long { "Long" } else { "Short" }.to_string();
 
-    let (wallet, authority, _) = if let Some(sw) = &ctx.session_wallet {
-        (sw.to_wallet()?, sw.authority, sw.trader_pda)
-    } else {
-        let wallet_file = ctx
-            .wallet_store
-            .load(&wallet_name)
-            .map_err(|e| VulcanError::auth("WALLET_NOT_FOUND", e.to_string()))?;
-        let password = crate::commands::trade::prompt_password()?;
-        let w = crate::wallet::Wallet::decrypt(&wallet_file.encrypted, &password)
-            .map_err(|e| VulcanError::auth("DECRYPT_FAILED", e.to_string()))?;
-        let auth = solana_pubkey::Pubkey::from_str(&wallet_file.public_key)
-            .map_err(|e| VulcanError::validation("INVALID_PUBKEY", e.to_string()))?;
-        (w, auth, phoenix_rise::types::TraderKey::new(auth).pda())
-    };
+    let (wallet, authority, _) =
+        crate::commands::trade::resolve_wallet_and_pda(ctx, Some(&wallet_name)).await?;
 
     let builder = ctx.tx_builder().await?;
 
@@ -623,20 +610,8 @@ pub async fn execute_reduce_inner(
     let side_str = if is_long { "Long" } else { "Short" }.to_string();
     let num_base_lots = size as u64;
 
-    let (wallet, authority, _) = if let Some(sw) = &ctx.session_wallet {
-        (sw.to_wallet()?, sw.authority, sw.trader_pda)
-    } else {
-        let wallet_file = ctx
-            .wallet_store
-            .load(&wallet_name)
-            .map_err(|e| VulcanError::auth("WALLET_NOT_FOUND", e.to_string()))?;
-        let password = crate::commands::trade::prompt_password()?;
-        let w = crate::wallet::Wallet::decrypt(&wallet_file.encrypted, &password)
-            .map_err(|e| VulcanError::auth("DECRYPT_FAILED", e.to_string()))?;
-        let auth = solana_pubkey::Pubkey::from_str(&wallet_file.public_key)
-            .map_err(|e| VulcanError::validation("INVALID_PUBKEY", e.to_string()))?;
-        (w, auth, phoenix_rise::types::TraderKey::new(auth).pda())
-    };
+    let (wallet, authority, _) =
+        crate::commands::trade::resolve_wallet_and_pda(ctx, Some(&wallet_name)).await?;
 
     let builder = ctx.tx_builder().await?;
     let ixs = if subaccount_index == 0 {
@@ -715,20 +690,8 @@ pub async fn execute_tp_sl_inner(
     let is_long = !pos.position_size.ui.starts_with('-');
     let primary_side = if is_long { Side::Bid } else { Side::Ask };
 
-    let (wallet, authority, _) = if let Some(sw) = &ctx.session_wallet {
-        (sw.to_wallet()?, sw.authority, sw.trader_pda)
-    } else {
-        let wallet_file = ctx
-            .wallet_store
-            .load(&wallet_name)
-            .map_err(|e| VulcanError::auth("WALLET_NOT_FOUND", e.to_string()))?;
-        let password = crate::commands::trade::prompt_password()?;
-        let w = crate::wallet::Wallet::decrypt(&wallet_file.encrypted, &password)
-            .map_err(|e| VulcanError::auth("DECRYPT_FAILED", e.to_string()))?;
-        let auth = solana_pubkey::Pubkey::from_str(&wallet_file.public_key)
-            .map_err(|e| VulcanError::validation("INVALID_PUBKEY", e.to_string()))?;
-        (w, auth, phoenix_rise::types::TraderKey::new(auth).pda())
-    };
+    let (wallet, authority, _) =
+        crate::commands::trade::resolve_wallet_and_pda(ctx, Some(&wallet_name)).await?;
 
     let trader_pda = phoenix_rise::types::TraderKey::derive_pda(
         &authority,

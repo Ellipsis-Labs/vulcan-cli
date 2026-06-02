@@ -24,6 +24,21 @@ reqwest = { version = "0.12", features = ["json"] }
 
 # Solana
 solana-sdk = "~2.3"
+# Fireblocks is intentionally omitted: some modes can auto-broadcast, while
+# Vulcan expects every signer to return a locally submittable transaction.
+solana-keychain = { version = "1.2", default-features = false, features = [
+    "memory",
+    "vault",
+    "privy",
+    "turnkey",
+    "gcp_kms",
+    "cdp",
+    "para",
+    "crossmint",
+    "dfns",
+    "openfort",
+    "sdk-v2",
+] }
 solana-pubkey = { version = "~2.4", features = ["curve25519"] }
 solana-instruction = { version = "~2.3", default-features = false, features = ["std"] }
 solana-rpc-client = "~2.3"

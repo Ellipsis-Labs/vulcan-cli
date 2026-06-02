@@ -8,7 +8,7 @@
 //! shell has no `HOME`, etc.) and unit tests cannot reach them.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -25,6 +25,37 @@ fn stripped_env(cmd: &mut Command, fake_home: &std::path::Path) {
         .env_remove("XDG_DATA_HOME")
         .env_remove("VULCAN_WALLET_NAME")
         .env_remove("VULCAN_WALLET_PASSWORD");
+}
+
+fn create_default_local_wallet(fake_home: &Path) {
+    let mut create = Command::new(bin());
+    stripped_env(&mut create, fake_home);
+    let out = create
+        .env("VULCAN_WALLET_PASSWORD", "vulcan-test-password")
+        .args([
+            "--yes", "-o", "json", "wallet", "create", "--name", "mcp-test",
+        ])
+        .output()
+        .expect("spawn vulcan wallet create");
+    assert!(
+        out.status.success(),
+        "wallet create failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let mut set_default = Command::new(bin());
+    stripped_env(&mut set_default, fake_home);
+    let out = set_default
+        .args(["--yes", "-o", "json", "wallet", "set-default", "mcp-test"])
+        .output()
+        .expect("spawn vulcan wallet set-default");
+    assert!(
+        out.status.success(),
+        "wallet set-default failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -48,6 +79,8 @@ fn live_mcp_without_password_fails_fast_with_actionable_error() {
     // The fix in main.rs treats empty as unset and fails with a clear
     // WALLET_PASSWORD_REQUIRED that explains both remedies (host UI + env var).
     let tmp = tempfile::tempdir().unwrap();
+    create_default_local_wallet(tmp.path());
+
     let mut cmd = Command::new(bin());
     stripped_env(&mut cmd, tmp.path());
     cmd.env("VULCAN_WALLET_PASSWORD", "") // explicitly empty

@@ -4,7 +4,9 @@
 //! Extracted from the Quant project.
 
 mod keypair;
+pub mod signer;
 pub mod store;
 
 pub use keypair::{Wallet, WalletSource};
-pub use store::{WalletFile, WalletStore};
+pub use signer::ResolvedSigner;
+pub use store::{WalletFile, WalletSignerConfig, WalletStore};
