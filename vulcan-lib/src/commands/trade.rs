@@ -2127,7 +2127,7 @@ pub async fn execute_cancel_tpsl_inner(
 
     let bundle =
         crate::commands::trader_state::fetch_trader_state_bundle(ctx, &authority, 0).await?;
-    let (subaccount, _pos) = bundle.state.find_position(&symbol_upper).ok_or_else(|| {
+    let (subaccount, pos) = bundle.state.find_position(&symbol_upper).ok_or_else(|| {
         VulcanError::validation("NO_POSITION", format!("No open position for '{}'", symbol))
     })?;
 
@@ -2142,8 +2142,13 @@ pub async fn execute_cancel_tpsl_inner(
         .find(|view| view.trader_subaccount_index == subaccount.subaccount_index)
         .map(|view| view.conditional_triggers.as_slice())
         .unwrap_or(&[]);
+    let is_long = pos.is_long();
 
-    let ixs = build_api_conditional_cancel_ixs(
+    // Prefer trader-state API IDs for multi-level TP/SL cancellation. They
+    // encode the on-chain conditional-order index, avoiding an RPC account
+    // fetch in the normal case. Fall back to the RPC decoder if the API ID
+    // shape is missing or invalid.
+    let api_cond_ixs = match build_api_conditional_cancel_ixs(
         ctx,
         authority,
         trader_pda,
@@ -2152,7 +2157,55 @@ pub async fn execute_cancel_tpsl_inner(
         cancel_tp,
         cancel_sl,
     )
-    .await?;
+    .await
+    {
+        Ok(Some(ixs)) if !ixs.is_empty() => Some(ixs),
+        Ok(_) | Err(_) => None,
+    };
+
+    let ixs = if let Some(ixs) = api_cond_ixs {
+        ixs
+    } else {
+        let cond_ixs = build_rpc_conditional_cancel_ixs(
+            ctx,
+            authority,
+            trader_pda,
+            &symbol_upper,
+            is_long,
+            cancel_tp,
+            cancel_sl,
+        )
+        .await?;
+        if !cond_ixs.is_empty() {
+            cond_ixs
+        } else {
+            let builder = ctx.tx_builder().await?;
+            let mut ixs = Vec::new();
+            if cancel_tp {
+                let tp_direction = if is_long {
+                    phoenix_rise::Direction::GreaterThan
+                } else {
+                    phoenix_rise::Direction::LessThan
+                };
+                let tp_ixs = builder
+                    .build_cancel_bracket_leg(authority, trader_pda, &symbol_upper, tp_direction)
+                    .map_err(|e| VulcanError::api("BUILD_CANCEL_TP_FAILED", e.to_string()))?;
+                ixs.extend(tp_ixs);
+            }
+            if cancel_sl {
+                let sl_direction = if is_long {
+                    phoenix_rise::Direction::LessThan
+                } else {
+                    phoenix_rise::Direction::GreaterThan
+                };
+                let sl_ixs = builder
+                    .build_cancel_bracket_leg(authority, trader_pda, &symbol_upper, sl_direction)
+                    .map_err(|e| VulcanError::api("BUILD_CANCEL_SL_FAILED", e.to_string()))?;
+                ixs.extend(sl_ixs);
+            }
+            ixs
+        }
+    };
 
     if ixs.is_empty() {
         return Err(VulcanError::validation(
@@ -2229,7 +2282,7 @@ async fn build_api_conditional_cancel_ixs(
     symbol_upper: &str,
     cancel_tp: bool,
     cancel_sl: bool,
-) -> Result<Vec<solana_sdk::instruction::Instruction>, VulcanError> {
+) -> Result<Option<Vec<solana_sdk::instruction::Instruction>>, VulcanError> {
     let metadata = ctx.metadata().await?;
     let market = metadata.get_market(symbol_upper).ok_or_else(|| {
         VulcanError::validation(
@@ -2258,13 +2311,7 @@ async fn build_api_conditional_cancel_ixs(
         let Some(parsed) =
             parse_conditional_order_id(&trigger.order_id, trigger.kind, market_asset_id)
         else {
-            return Err(VulcanError::validation(
-                "INVALID_CONDITIONAL_ORDER_ID",
-                format!(
-                    "Could not parse conditional order id '{}'",
-                    trigger.order_id
-                ),
-            ));
+            return Ok(None);
         };
 
         let entry = by_index
@@ -2291,6 +2338,73 @@ async fn build_api_conditional_cancel_ixs(
         )?);
     }
 
+    Ok(Some(ixs))
+}
+
+/// Build per-index cancel instructions against the `ConditionalOrderCollection`
+/// for every active leg matching the requested direction(s). Returns an empty
+/// vec when the collection account does not exist, letting the caller use the
+/// legacy single-SL/TP cancel path.
+///
+/// Disable mapping matches the on-chain `cancel_trigger(disable_greater,
+/// disable_less)` call:
+/// - `disable_first` disables `greater_trigger_order` (long TP / short SL)
+/// - `disable_second` disables `less_trigger_order` (long SL / short TP)
+#[allow(clippy::too_many_arguments)]
+async fn build_rpc_conditional_cancel_ixs(
+    ctx: &AppContext,
+    authority: Pubkey,
+    trader_pda: Pubkey,
+    symbol_upper: &str,
+    is_long: bool,
+    cancel_tp: bool,
+    cancel_sl: bool,
+) -> Result<Vec<solana_sdk::instruction::Instruction>, VulcanError> {
+    let Some(collection) =
+        crate::commands::conditional_orders::fetch_conditional_orders(ctx, trader_pda).await?
+    else {
+        return Ok(Vec::new());
+    };
+
+    let metadata = ctx.metadata().await?;
+    let market = metadata.get_market(symbol_upper).ok_or_else(|| {
+        VulcanError::validation(
+            "UNKNOWN_MARKET",
+            format!("Unknown market: {}", symbol_upper),
+        )
+    })?;
+    let market_asset_id = market.asset_id;
+    let orderbook = Pubkey::from_str(&market.market_pubkey)
+        .map_err(|e| VulcanError::validation("INVALID_MARKET_PUBKEY", e.to_string()))?;
+
+    let mut ixs = Vec::new();
+    for (index, order) in collection.active_orders() {
+        if order.asset_id != market_asset_id {
+            continue;
+        }
+        let greater_active = order.greater_trigger_order.is_active;
+        let less_active = order.less_trigger_order.is_active;
+
+        let (cancel_greater, cancel_less) = if is_long {
+            (cancel_tp, cancel_sl)
+        } else {
+            (cancel_sl, cancel_tp)
+        };
+        let disable_first = cancel_greater && greater_active;
+        let disable_second = cancel_less && less_active;
+        if !disable_first && !disable_second {
+            continue;
+        }
+
+        ixs.push(build_cancel_conditional_order_ix(
+            authority,
+            trader_pda,
+            orderbook,
+            index,
+            disable_first,
+            disable_second,
+        )?);
+    }
     Ok(ixs)
 }
 

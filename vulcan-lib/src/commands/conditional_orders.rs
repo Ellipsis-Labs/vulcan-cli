@@ -9,11 +9,41 @@ use crate::commands::trader_state::{
 };
 use crate::context::AppContext;
 use crate::error::VulcanError;
-use phoenix_rise::accounts::StopLossTradeSide;
+use phoenix_rise::accounts::{ConditionalOrderCollection, StopLossTradeSide};
+use phoenix_rise::get_conditional_orders_address;
 use phoenix_rise::math::{BaseLots, Side as RiseSide, Ticks, WrapperNum};
 use phoenix_rise::types::PhoenixMetadata;
 use solana_pubkey::Pubkey;
+use solana_sdk::commitment_config::CommitmentConfig;
 use std::collections::{HashMap, HashSet};
+
+/// Fetch and decode the on-chain `ConditionalOrderCollection` for one trader.
+/// Returns `Ok(None)` when the account does not exist (no conditional orders
+/// have ever been placed for this trader).
+///
+/// Prefer the trader-state trigger projection for read/display paths. This RPC
+/// decoder is kept for cancellation when trader-state omits cancellable API IDs.
+pub async fn fetch_conditional_orders(
+    ctx: &AppContext,
+    trader_pda: Pubkey,
+) -> Result<Option<ConditionalOrderCollection>, VulcanError> {
+    let pda = get_conditional_orders_address(&trader_pda);
+    let rpc = ctx.rpc_client_async();
+
+    let account = rpc
+        .get_account_with_commitment(&pda, CommitmentConfig::confirmed())
+        .await
+        .map_err(|e| VulcanError::network("RPC_GET_ACCOUNT_FAILED", e.to_string()))?
+        .value;
+
+    let Some(account) = account else {
+        return Ok(None);
+    };
+
+    let collection = ConditionalOrderCollection::try_from_account_bytes(&account.data)
+        .map_err(|e| VulcanError::api("CONDITIONAL_ORDERS_DECODE_FAILED", e.to_string()))?;
+    Ok(Some(collection))
+}
 
 /// Fetch projected conditional triggers directly from v1 trader-state.
 pub async fn fetch_conditional_triggers_for_authority(

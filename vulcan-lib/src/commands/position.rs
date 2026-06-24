@@ -4,6 +4,8 @@ use crate::cli::position::PositionCommand;
 use crate::context::AppContext;
 use crate::error::VulcanError;
 use crate::output::{render_success, TableRenderable};
+use phoenix_rise::math::{SignedBaseLots, WrapperNum};
+use phoenix_rise::types::{decimal_from_signed_base_lots, Decimal as UiDecimal};
 use phoenix_rise::Side;
 use serde::Serialize;
 use solana_pubkey::Pubkey;
@@ -535,7 +537,17 @@ async fn execute_close_target_inner(
     let is_long = pos.is_long();
     let close_side = if is_long { Side::Ask } else { Side::Bid };
     let abs_size = pos.abs_base_lots();
-    let size_str = pos.base_position_lots.clone();
+    let metadata = ctx.metadata().await?;
+    let size_decimal = metadata
+        .get_perp_asset_metadata(&symbol_upper)
+        .map(|asset| {
+            decimal_from_signed_base_lots(
+                SignedBaseLots::new(pos.base_lots()),
+                asset.base_lot_decimals(),
+            )
+        })
+        .unwrap_or_else(|| UiDecimal::from_i64_with_decimals(pos.base_lots(), 0));
+    let size_str = size_decimal.ui;
     let side_closed_str = if is_long { "Long" } else { "Short" }.to_string();
 
     let (wallet, authority, _) =
