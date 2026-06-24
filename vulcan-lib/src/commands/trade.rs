@@ -5,12 +5,10 @@ use crate::context::AppContext;
 use crate::error::VulcanError;
 use crate::output::{render_success, TableRenderable};
 use crate::wallet::ResolvedSigner;
-use phoenix_rise::math::{SignedQuoteLots, WrapperNum};
-use phoenix_rise::types::trader_state::LimitOrder as SdkLimitOrder;
-use phoenix_rise::types::{
-    Position as SdkPosition, SubaccountState, Trader, TraderKey, TraderView,
+use phoenix_rise::types::{Trader, TraderKey};
+use phoenix_rise::{
+    BracketLeg, BracketLegOrders, BracketLegSize, IsolatedCollateralFlow, OrderFlags, Side,
 };
-use phoenix_rise::{BracketLeg, BracketLegOrders, BracketLegSize, IsolatedCollateralFlow, Side};
 use serde::Serialize;
 use solana_keychain::SignTransactionResult;
 use solana_pubkey::Pubkey;
@@ -29,6 +27,8 @@ pub struct OrderResult {
     pub side: String,
     pub size: f64,
     pub price: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subaccount_index: Option<u8>,
     pub tp: Option<f64>,
     pub sl: Option<f64>,
     pub dry_run: bool,
@@ -50,6 +50,9 @@ impl TableRenderable for OrderResult {
         println!("  Symbol: {}", self.symbol);
         println!("  Side: {}", self.side);
         println!("  Size: {} base lots", self.size);
+        if let Some(subaccount_index) = self.subaccount_index {
+            println!("  Subaccount: {}", subaccount_index);
+        }
         if let Some(p) = self.price {
             println!("  Price: ${:.2}", p);
         }
@@ -212,6 +215,8 @@ impl TableRenderable for CancelAllMarketsResult {
 
 #[derive(Debug, Serialize)]
 pub struct OrderInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subaccount_index: Option<u8>,
     pub symbol: String,
     pub side: String,
     pub order_id: String,
@@ -241,7 +246,11 @@ impl TableRenderable for OrdersResult {
             return;
         }
         let show_symbol = self.symbol.is_none();
+        let show_subaccount = self.orders.iter().any(|o| o.subaccount_index.is_some());
         let mut headers = vec!["Order ID", "Side", "Price", "Remaining", "Initial", "Flags"];
+        if show_subaccount {
+            headers.insert(0, "Subaccount");
+        }
         if show_symbol {
             headers.insert(0, "Symbol");
         }
@@ -262,6 +271,13 @@ impl TableRenderable for OrdersResult {
                 let mut row = Vec::new();
                 if show_symbol {
                     row.push(o.symbol.clone());
+                }
+                if show_subaccount {
+                    row.push(
+                        o.subaccount_index
+                            .map(|index| index.to_string())
+                            .unwrap_or_else(|| "0".to_string()),
+                    );
                 }
                 row.extend([
                     o.order_id.clone(),
@@ -420,77 +436,13 @@ pub(crate) fn resolve_authority(ctx: &AppContext) -> Result<Pubkey, VulcanError>
     resolve_authority_name(ctx).map(|(_, authority)| authority)
 }
 
-/// Convert HTTP API TraderViews into the SDK Trader struct needed for isolated orders.
-pub fn trader_from_views(authority: Pubkey, pda_index: u8, views: &[TraderView]) -> Trader {
-    let key = TraderKey::new_with_idx(authority, pda_index, 0);
-    let mut trader = Trader::new(key);
-
-    for view in views {
-        let collateral_f64: f64 = view.collateral_balance.value as f64
-            / 10f64.powi(view.collateral_balance.decimals as i32);
-        let collateral_quote_lots = (collateral_f64 * 1_000_000.0) as i64;
-
-        let mut subaccount = SubaccountState {
-            subaccount_index: view.trader_subaccount_index,
-            collateral: SignedQuoteLots::new(collateral_quote_lots),
-            ..Default::default()
-        };
-
-        // Convert positions
-        for pos_view in &view.positions {
-            let base_lots: i64 = pos_view.position_size.value;
-            let entry_ticks: i64 = pos_view.entry_price.value;
-            let entry_usd = pos_view
-                .entry_price
-                .ui
-                .parse()
-                .unwrap_or(phoenix_rise::Decimal::ZERO);
-
-            let position = SdkPosition {
-                symbol: pos_view.symbol.clone(),
-                base_position_lots: base_lots,
-                entry_price_ticks: entry_ticks,
-                entry_price_usd: entry_usd,
-                virtual_quote_position_lots: 0,
-                unsettled_funding_quote_lots: 0,
-                accumulated_funding_quote_lots: 0,
-            };
-            subaccount
-                .positions
-                .insert(pos_view.symbol.clone(), position);
-        }
-
-        // Convert limit orders
-        for (symbol, orders) in &view.limit_orders {
-            for order in orders {
-                let osn: u64 = order.order_sequence_number.parse().unwrap_or(0);
-                let sdk_order = SdkLimitOrder {
-                    symbol: symbol.clone(),
-                    order_sequence_number: osn,
-                    side: format!("{:?}", order.side),
-                    order_type: String::new(),
-                    price_ticks: order.price.value,
-                    price_usd: order
-                        .price
-                        .ui
-                        .parse()
-                        .unwrap_or(phoenix_rise::Decimal::ZERO),
-                    size_remaining_lots: order.trade_size_remaining.value.unsigned_abs(),
-                    initial_size_lots: order.initial_trade_size.value.unsigned_abs(),
-                    reduce_only: order.is_reduce_only,
-                    is_stop_loss: order.is_stop_loss,
-                    status: "Open".to_string(),
-                };
-                subaccount.orders.insert((symbol.clone(), osn), sdk_order);
-            }
-        }
-
-        trader
-            .subaccounts
-            .insert(view.trader_subaccount_index, subaccount);
-    }
-
-    trader
+pub(crate) async fn sdk_trader_for_isolated_builder(
+    ctx: &AppContext,
+    authority: Pubkey,
+) -> Result<Trader, VulcanError> {
+    let state =
+        crate::commands::trader_state::fetch_trader_state_snapshot(ctx, &authority, 0).await?;
+    Ok(state.to_sdk_trader_for_isolated_builder(authority))
 }
 
 pub fn bracket_leg_orders(
@@ -983,6 +935,7 @@ pub async fn execute(ctx: &AppContext, cmd: TradeCommand) -> Result<(), VulcanEr
             sl,
             isolated,
             collateral,
+            subaccount_index,
             reduce_only,
         } => {
             execute_limit_order(
@@ -995,6 +948,7 @@ pub async fn execute(ctx: &AppContext, cmd: TradeCommand) -> Result<(), VulcanEr
                 sl,
                 isolated,
                 collateral,
+                subaccount_index,
                 reduce_only,
             )
             .await
@@ -1007,6 +961,7 @@ pub async fn execute(ctx: &AppContext, cmd: TradeCommand) -> Result<(), VulcanEr
             sl,
             isolated,
             collateral,
+            subaccount_index,
             reduce_only,
         } => {
             execute_limit_order(
@@ -1019,6 +974,7 @@ pub async fn execute(ctx: &AppContext, cmd: TradeCommand) -> Result<(), VulcanEr
                 sl,
                 isolated,
                 collateral,
+                subaccount_index,
                 reduce_only,
             )
             .await
@@ -1068,14 +1024,7 @@ pub async fn execute_market_order_inner(
     let bracket = sized_bracket_leg_orders(tp, sl, num_base_lots);
 
     let ixs = if isolated {
-        // Fetch full trader state for isolated order building
-        let traders = ctx
-            .http_client
-            .get_traders(&authority)
-            .await
-            .map_err(|e| VulcanError::api("TRADERS_FETCH_FAILED", e.to_string()))?;
-
-        let trader = trader_from_views(authority, 0, &traders);
+        let trader = sdk_trader_for_isolated_builder(ctx, authority).await?;
         let conditional_init_target = trader
             .get_or_create_isolated_subaccount_key(symbol)
             .and_then(|sub_key| {
@@ -1160,6 +1109,7 @@ pub async fn execute_market_order_inner(
         side: side_str.to_string(),
         size,
         price: None,
+        subaccount_index: None,
         tp,
         sl,
         dry_run: ctx.dry_run,
@@ -1228,7 +1178,8 @@ pub async fn execute_limit_order_inner(
     sl: Option<f64>,
     isolated: bool,
     collateral: Option<f64>,
-    _reduce_only: bool,
+    subaccount_index: Option<u8>,
+    reduce_only: bool,
 ) -> Result<OrderResult, VulcanError> {
     let (wallet, authority, trader_pda) = resolve_wallet_and_pda(ctx, None).await?;
     let builder = ctx.tx_builder().await?;
@@ -1237,47 +1188,133 @@ pub async fn execute_limit_order_inner(
     let bracket = bracket_leg_orders(tp, sl);
 
     let ixs = if isolated {
-        let traders = ctx
-            .http_client
-            .get_traders(&authority)
-            .await
-            .map_err(|e| VulcanError::api("TRADERS_FETCH_FAILED", e.to_string()))?;
+        let trader = sdk_trader_for_isolated_builder(ctx, authority).await?;
 
-        let trader = trader_from_views(authority, 0, &traders);
-        let conditional_init_target = trader
-            .get_or_create_isolated_subaccount_key(symbol)
-            .and_then(|sub_key| {
-                if !trader.subaccount_exists(sub_key.subaccount_index) {
-                    Some(sub_key.pda())
-                } else {
-                    None
+        if let Some(subaccount_index) = subaccount_index {
+            if subaccount_index == 0 {
+                return Err(VulcanError::validation(
+                    "INVALID_SUBACCOUNT_INDEX",
+                    "--subaccount-index must be greater than 0 for isolated orders.",
+                ));
+            }
+
+            let sub_key = trader.subaccount_key(subaccount_index);
+            let mut ixs = Vec::new();
+
+            if !trader.subaccount_exists(subaccount_index) {
+                if !trader.subaccount_exists(0) {
+                    return Err(VulcanError::validation(
+                        "MISSING_CROSS_SUBACCOUNT",
+                        "Register the cross-margin trader account before creating isolated subaccounts.",
+                    ));
                 }
-            });
+                ixs.extend(
+                    builder
+                        .build_register_trader(authority, trader.key.pda_index, subaccount_index)
+                        .map_err(|e| VulcanError::api("BUILD_REGISTER_FAILED", e.to_string()))?,
+                );
+                ixs.extend(
+                    builder
+                        .build_sync_parent_to_child(authority, trader.key.pda(), sub_key.pda())
+                        .map_err(|e| VulcanError::api("BUILD_SYNC_FAILED", e.to_string()))?,
+                );
+            }
 
-        let collateral_flow = collateral.map(|c| IsolatedCollateralFlow::TransferFromCrossMargin {
-            collateral: (c * 1_000_000.0) as u64,
-        });
+            if let Some(collateral) = collateral {
+                if collateral <= 0.0 {
+                    return Err(VulcanError::validation(
+                        "INVALID_COLLATERAL",
+                        "--collateral must be positive.",
+                    ));
+                }
+                ixs.extend(
+                    builder
+                        .build_transfer_collateral(
+                            authority,
+                            trader.key.pda(),
+                            sub_key.pda(),
+                            collateral,
+                        )
+                        .map_err(|e| VulcanError::api("BUILD_TRANSFER_FAILED", e.to_string()))?,
+                );
+            }
 
-        let mut ixs = builder
-            .build_isolated_limit_order(
-                &trader,
-                symbol,
-                side,
-                price,
-                num_base_lots,
-                collateral_flow,
-                true, // allow_cross_and_isolated
-            )
-            .map_err(|e| VulcanError::api("BUILD_ORDER_FAILED", e.to_string()))?;
+            let mut ticket_builder = phoenix_rise::LimitOrderTicket::builder()
+                .authority(authority)
+                .trader_account(sub_key.pda())
+                .symbol(symbol)
+                .side(side)
+                .price(price)
+                .num_base_lots(num_base_lots)
+                .subaccount_index(subaccount_index);
 
-        if let Some(trader_pda) = conditional_init_target {
-            let init_ixs =
-                conditional_orders_init_ixs_if_needed(ctx, &builder, authority, trader_pda).await?;
-            insert_before_first_order_or_conditional_ix(&mut ixs, init_ixs);
+            if reduce_only {
+                ticket_builder = ticket_builder.order_flags(OrderFlags::ReduceOnly);
+            }
+
+            if let Some(bracket) = bracket {
+                let rpc_client = Arc::new(ctx.rpc_client_async());
+                ticket_builder = ticket_builder
+                    .bracket_leg_ticket(phoenix_rise::BracketLegTicket::new(rpc_client, bracket));
+            }
+
+            let ticket = ticket_builder
+                .build()
+                .map_err(|e| VulcanError::api("BUILD_ORDER_FAILED", e.to_string()))?;
+
+            ixs.extend(
+                builder
+                    .place_limit_order(ticket)
+                    .await
+                    .map_err(|e| VulcanError::api("BUILD_ORDER_FAILED", e.to_string()))?,
+            );
+
+            ixs
+        } else {
+            let conditional_init_target = trader
+                .get_or_create_isolated_subaccount_key(symbol)
+                .and_then(|sub_key| {
+                    if !trader.subaccount_exists(sub_key.subaccount_index) {
+                        Some(sub_key.pda())
+                    } else {
+                        None
+                    }
+                });
+
+            let collateral_flow =
+                collateral.map(|c| IsolatedCollateralFlow::TransferFromCrossMargin {
+                    collateral: (c * 1_000_000.0) as u64,
+                });
+
+            let mut ixs = builder
+                .build_isolated_limit_order(
+                    &trader,
+                    symbol,
+                    side,
+                    price,
+                    num_base_lots,
+                    collateral_flow,
+                    true, // allow_cross_and_isolated
+                )
+                .map_err(|e| VulcanError::api("BUILD_ORDER_FAILED", e.to_string()))?;
+
+            if let Some(trader_pda) = conditional_init_target {
+                let init_ixs =
+                    conditional_orders_init_ixs_if_needed(ctx, &builder, authority, trader_pda)
+                        .await?;
+                insert_before_first_order_or_conditional_ix(&mut ixs, init_ixs);
+            }
+
+            ixs
+        }
+    } else {
+        if subaccount_index.is_some() {
+            return Err(VulcanError::validation(
+                "SUBACCOUNT_REQUIRES_ISOLATED",
+                "--subaccount-index can only be used with --isolated.",
+            ));
         }
 
-        ixs
-    } else {
         let metadata = ctx.metadata().await?;
         if metadata.is_isolated_only(symbol) {
             return Err(VulcanError::validation(
@@ -1296,6 +1333,10 @@ pub async fn execute_limit_order_inner(
             .side(side)
             .price(price)
             .num_base_lots(num_base_lots);
+
+        if reduce_only {
+            ticket_builder = ticket_builder.order_flags(OrderFlags::ReduceOnly);
+        }
 
         if let Some(bracket) = bracket {
             let rpc_client = Arc::new(ctx.rpc_client_async());
@@ -1327,6 +1368,7 @@ pub async fn execute_limit_order_inner(
         side: side_str.to_string(),
         size,
         price: Some(price),
+        subaccount_index: if isolated { subaccount_index } else { None },
         tp,
         sl,
         dry_run: ctx.dry_run,
@@ -1470,6 +1512,7 @@ async fn execute_limit_order(
     sl: Option<f64>,
     isolated: bool,
     collateral: Option<f64>,
+    subaccount_index: Option<u8>,
     reduce_only: bool,
 ) -> Result<(), VulcanError> {
     if !ctx.yes && !ctx.dry_run {
@@ -1489,6 +1532,7 @@ async fn execute_limit_order(
         sl,
         isolated,
         collateral,
+        subaccount_index,
         reduce_only,
     )
     .await?;
@@ -1508,8 +1552,7 @@ async fn execute_limit_order(
 
 struct LimitOrderCancelSelection {
     order_ids: Vec<String>,
-    cancel_ids: Vec<phoenix_rise::CancelId>,
-    needs_fallback: bool,
+    cancel_ids_by_subaccount: BTreeMap<u8, Vec<phoenix_rise::CancelId>>,
 }
 
 async fn api_limit_order_cancel_selection(
@@ -1518,13 +1561,11 @@ async fn api_limit_order_cancel_selection(
     symbol_upper: &str,
     requested_order_ids: Option<&[String]>,
 ) -> Result<LimitOrderCancelSelection, VulcanError> {
-    let metadata = ctx.metadata().await?;
-    let order_data = crate::commands::conditional_orders::fetch_trader_state_order_data(
-        ctx, authority, 0, 0, metadata,
-    )
-    .await?;
+    let bundle =
+        crate::commands::trader_state::fetch_trader_state_bundle(ctx, authority, 0).await?;
 
-    let selected: Vec<_> = order_data
+    let selected: Vec<_> = bundle
+        .order_data
         .limit_orders
         .iter()
         .filter(|o| o.symbol.eq_ignore_ascii_case(symbol_upper))
@@ -1534,90 +1575,40 @@ async fn api_limit_order_cancel_selection(
         })
         .collect();
 
-    let missing_requested = requested_order_ids
-        .map(|ids| {
-            ids.iter()
-                .any(|id| !selected.iter().any(|o| &o.order_sequence_number == id))
-        })
-        .unwrap_or(false);
-    let needs_fallback = match requested_order_ids {
-        Some(_) => missing_requested,
-        None => order_data.has_unparsed_limit_orders,
-    };
+    if let Some(ids) = requested_order_ids {
+        let missing: Vec<_> = ids
+            .iter()
+            .filter(|id| !selected.iter().any(|o| &o.order_sequence_number == *id))
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            return Err(VulcanError::validation(
+                "INVALID_ORDER_IDS",
+                format!(
+                    "No matching open orders found for requested IDs: {}",
+                    missing.join(", ")
+                ),
+            ));
+        }
+    }
+
+    let mut cancel_ids_by_subaccount: BTreeMap<u8, Vec<phoenix_rise::CancelId>> = BTreeMap::new();
+    for order in &selected {
+        cancel_ids_by_subaccount
+            .entry(order.subaccount_index)
+            .or_default()
+            .push(phoenix_rise::CancelId::new(
+                order.price_ticks,
+                order.order_sequence_number_u64,
+            ));
+    }
 
     Ok(LimitOrderCancelSelection {
         order_ids: selected
             .iter()
             .map(|o| o.order_sequence_number.clone())
             .collect(),
-        cancel_ids: selected
-            .iter()
-            .map(|o| phoenix_rise::CancelId::new(o.price_ticks, o.order_sequence_number_u64))
-            .collect(),
-        needs_fallback,
-    })
-}
-
-async fn legacy_limit_order_cancel_selection(
-    ctx: &AppContext,
-    authority: &Pubkey,
-    symbol_upper: &str,
-    requested_order_ids: Option<&[String]>,
-) -> Result<LimitOrderCancelSelection, VulcanError> {
-    let traders = ctx
-        .http_client
-        .get_traders(authority)
-        .await
-        .map_err(|e| VulcanError::api("TRADERS_FETCH_FAILED", e.to_string()))?;
-
-    let trader = traders
-        .iter()
-        .find(|t| t.trader_subaccount_index == 0)
-        .ok_or_else(|| {
-            VulcanError::api("NO_TRADER_ACCOUNT", "No registered trader account found")
-        })?;
-
-    let orders = trader
-        .limit_orders
-        .get(symbol_upper)
-        .cloned()
-        .unwrap_or_default();
-
-    let metadata = ctx.metadata().await?;
-    let calc = metadata
-        .get_market_calculator(symbol_upper)
-        .ok_or_else(|| {
-            VulcanError::validation(
-                "UNKNOWN_MARKET",
-                format!("Unknown market: {}", symbol_upper),
-            )
-        })?;
-
-    let selected: Vec<_> = orders
-        .iter()
-        .filter(|o| match requested_order_ids {
-            Some(ids) => ids.contains(&o.order_sequence_number),
-            None => true,
-        })
-        .collect();
-
-    Ok(LimitOrderCancelSelection {
-        order_ids: selected
-            .iter()
-            .map(|o| o.order_sequence_number.clone())
-            .collect(),
-        cancel_ids: selected
-            .iter()
-            .map(|o| {
-                let price_f64 = o.price.value as f64 / 10f64.powi(o.price.decimals as i32);
-                let ticks = calc.price_to_ticks(price_f64).unwrap_or_default();
-                phoenix_rise::CancelId::new(
-                    ticks.into(),
-                    o.order_sequence_number.parse::<u64>().unwrap_or(0),
-                )
-            })
-            .collect(),
-        needs_fallback: false,
+        cancel_ids_by_subaccount,
     })
 }
 
@@ -1626,30 +1617,18 @@ pub async fn execute_cancel_inner(
     symbol: &str,
     order_ids: Vec<String>,
 ) -> Result<CancelResult, VulcanError> {
-    let (wallet, authority, trader_pda) = resolve_wallet_and_pda(ctx, None).await?;
+    let (wallet, authority, _trader_pda) = resolve_wallet_and_pda(ctx, None).await?;
     let symbol_upper = symbol.to_ascii_uppercase();
 
-    let selection = match api_limit_order_cancel_selection(
+    let selection = api_limit_order_cancel_selection(
         ctx,
         &authority,
         &symbol_upper,
         Some(order_ids.as_slice()),
     )
-    .await
-    {
-        Ok(selection) if !selection.needs_fallback => selection,
-        _ => {
-            legacy_limit_order_cancel_selection(
-                ctx,
-                &authority,
-                &symbol_upper,
-                Some(order_ids.as_slice()),
-            )
-            .await?
-        }
-    };
+    .await?;
 
-    if selection.cancel_ids.is_empty() {
+    if selection.cancel_ids_by_subaccount.is_empty() {
         return Err(VulcanError::validation(
             "INVALID_ORDER_IDS",
             "No matching open orders found for the provided IDs",
@@ -1657,9 +1636,15 @@ pub async fn execute_cancel_inner(
     }
 
     let builder = ctx.tx_builder().await?;
-    let ixs = builder
-        .build_cancel_orders(authority, trader_pda, symbol, selection.cancel_ids)
-        .map_err(|e| VulcanError::api("BUILD_CANCEL_FAILED", e.to_string()))?;
+    let mut ixs = Vec::new();
+    for (subaccount_index, cancel_ids) in selection.cancel_ids_by_subaccount {
+        let trader_pda = TraderKey::derive_pda(&authority, 0, subaccount_index);
+        ixs.extend(
+            builder
+                .build_cancel_orders(authority, trader_pda, symbol, cancel_ids)
+                .map_err(|e| VulcanError::api("BUILD_CANCEL_FAILED", e.to_string()))?,
+        );
+    }
 
     let num_ixs = ixs.len();
     let sig = send_or_dry_run(ctx, ixs, &wallet).await?;
@@ -1699,16 +1684,12 @@ pub async fn execute_cancel_all_inner(
     ctx: &AppContext,
     symbol: &str,
 ) -> Result<CancelResult, VulcanError> {
-    let (wallet, authority, trader_pda) = resolve_wallet_and_pda(ctx, None).await?;
+    let (wallet, authority, _trader_pda) = resolve_wallet_and_pda(ctx, None).await?;
     let symbol_upper = symbol.to_ascii_uppercase();
 
-    let selection =
-        match api_limit_order_cancel_selection(ctx, &authority, &symbol_upper, None).await {
-            Ok(selection) if !selection.needs_fallback => selection,
-            _ => legacy_limit_order_cancel_selection(ctx, &authority, &symbol_upper, None).await?,
-        };
+    let selection = api_limit_order_cancel_selection(ctx, &authority, &symbol_upper, None).await?;
 
-    if selection.cancel_ids.is_empty() {
+    if selection.cancel_ids_by_subaccount.is_empty() {
         return Ok(CancelResult {
             symbol: symbol.to_string(),
             cancelled_ids: vec![],
@@ -1719,9 +1700,15 @@ pub async fn execute_cancel_all_inner(
     }
 
     let builder = ctx.tx_builder().await?;
-    let ixs = builder
-        .build_cancel_orders(authority, trader_pda, symbol, selection.cancel_ids)
-        .map_err(|e| VulcanError::api("BUILD_CANCEL_FAILED", e.to_string()))?;
+    let mut ixs = Vec::new();
+    for (subaccount_index, cancel_ids) in selection.cancel_ids_by_subaccount {
+        let trader_pda = TraderKey::derive_pda(&authority, 0, subaccount_index);
+        ixs.extend(
+            builder
+                .build_cancel_orders(authority, trader_pda, symbol, cancel_ids)
+                .map_err(|e| VulcanError::api("BUILD_CANCEL_FAILED", e.to_string()))?,
+        );
+    }
 
     let num_ixs = ixs.len();
     let sig = send_or_dry_run(ctx, ixs, &wallet).await?;
@@ -1810,31 +1797,16 @@ pub async fn execute_orders_inner(
     symbol: Option<&str>,
 ) -> Result<OrdersResult, VulcanError> {
     let authority = resolve_authority(ctx)?;
-
-    match execute_orders_inner_api(ctx, &authority, symbol).await {
-        Ok(result) => Ok(result),
-        Err(_) => execute_orders_inner_legacy(ctx, &authority, symbol).await,
-    }
-}
-
-async fn execute_orders_inner_api(
-    ctx: &AppContext,
-    authority: &Pubkey,
-    symbol: Option<&str>,
-) -> Result<OrdersResult, VulcanError> {
-    let metadata = ctx.metadata().await?;
-    let order_data = crate::commands::conditional_orders::fetch_trader_state_order_data(
-        ctx, authority, 0, 0, metadata,
-    )
-    .await?;
+    let bundle =
+        crate::commands::trader_state::fetch_trader_state_bundle(ctx, &authority, 0).await?;
 
     let mut orders = crate::commands::conditional_orders::trader_state_limit_orders_to_order_infos(
-        &order_data.limit_orders,
+        &bundle.order_data.limit_orders,
         symbol,
     );
     orders.extend(
         crate::commands::conditional_orders::triggers_to_order_infos(
-            &order_data.conditional_triggers,
+            &bundle.order_data.conditional_triggers,
             symbol,
         ),
     );
@@ -1843,91 +1815,6 @@ async fn execute_orders_inner_api(
         symbol: symbol.map(|s| s.to_ascii_uppercase()),
         orders,
     })
-}
-
-async fn execute_orders_inner_legacy(
-    ctx: &AppContext,
-    authority: &Pubkey,
-    symbol: Option<&str>,
-) -> Result<OrdersResult, VulcanError> {
-    let traders = ctx
-        .http_client
-        .get_traders(authority)
-        .await
-        .map_err(|e| VulcanError::api("TRADERS_FETCH_FAILED", e.to_string()))?;
-
-    let trader = traders
-        .iter()
-        .find(|t| t.trader_subaccount_index == 0)
-        .ok_or_else(|| {
-            VulcanError::api(
-                "NO_TRADER_ACCOUNT",
-                "No registered trader account found. Use 'vulcan account register' first.",
-            )
-        })?;
-
-    let mut result = project_orders(trader, symbol);
-
-    let metadata = ctx.metadata().await?;
-    let triggers =
-        crate::commands::conditional_orders::fetch_conditional_triggers(ctx, trader, metadata)
-            .await?;
-    let extra = crate::commands::conditional_orders::triggers_to_order_infos(&triggers, symbol);
-    result.orders.extend(extra);
-
-    Ok(result)
-}
-
-pub(crate) fn project_orders(
-    trader: &phoenix_rise::types::TraderView,
-    symbol: Option<&str>,
-) -> OrdersResult {
-    let order_infos = match symbol {
-        Some(sym) => {
-            let symbol_upper = sym.to_ascii_uppercase();
-            let orders = trader
-                .limit_orders
-                .get(&symbol_upper)
-                .cloned()
-                .unwrap_or_default();
-            orders_to_infos(&symbol_upper, &orders)
-        }
-        None => {
-            let mut all = Vec::new();
-            for (sym, orders) in &trader.limit_orders {
-                all.extend(orders_to_infos(sym, orders));
-            }
-            all
-        }
-    };
-
-    OrdersResult {
-        symbol: symbol.map(|s| s.to_ascii_uppercase()),
-        orders: order_infos,
-    }
-}
-
-fn orders_to_infos(symbol: &str, orders: &[phoenix_rise::types::LimitOrder]) -> Vec<OrderInfo> {
-    orders
-        .iter()
-        .map(|o| {
-            let side = match o.side {
-                phoenix_rise::types::Side::Bid => "Buy",
-                phoenix_rise::types::Side::Ask => "Sell",
-            };
-            OrderInfo {
-                symbol: symbol.to_string(),
-                side: side.to_string(),
-                order_id: o.order_sequence_number.clone(),
-                price: o.price.ui.clone(),
-                size_remaining: o.trade_size_remaining.ui.clone(),
-                initial_size: o.initial_trade_size.ui.clone(),
-                reduce_only: o.is_reduce_only,
-                is_stop_loss: o.is_stop_loss,
-                is_take_profit: false,
-            }
-        })
-        .collect()
 }
 
 async fn execute_orders(ctx: &AppContext, symbol: Option<&str>) -> Result<(), VulcanError> {
@@ -2061,39 +1948,26 @@ pub async fn execute_set_tpsl_inner(
     let (wallet, authority, _) = resolve_wallet_and_pda(ctx, None).await?;
     let symbol_upper = symbol.to_ascii_uppercase();
 
-    // Fetch trader state to detect position side
-    let traders = ctx
-        .http_client
-        .get_traders(&authority)
-        .await
-        .map_err(|e| VulcanError::api("TRADERS_FETCH_FAILED", e.to_string()))?;
+    let trader_state =
+        crate::commands::trader_state::fetch_trader_state_snapshot(ctx, &authority, 0).await?;
+    let (subaccount, pos) = trader_state.find_position(&symbol_upper).ok_or_else(|| {
+        VulcanError::validation(
+            "NO_POSITION",
+            format!(
+                "No open position for '{}'. TP/SL requires an existing position.",
+                symbol
+            ),
+        )
+    })?;
 
-    let (trader_view, pos) = traders
-        .iter()
-        .find_map(|t| {
-            t.positions
-                .iter()
-                .find(|p| p.symbol.to_ascii_uppercase() == symbol_upper)
-                .map(|p| (t, p))
-        })
-        .ok_or_else(|| {
-            VulcanError::validation(
-                "NO_POSITION",
-                format!(
-                    "No open position for '{}'. TP/SL requires an existing position.",
-                    symbol
-                ),
-            )
-        })?;
-
-    let is_long = !pos.position_size.ui.starts_with('-');
+    let is_long = pos.is_long();
     let primary_side = if is_long { Side::Bid } else { Side::Ask };
     let side_str = if is_long { "Long" } else { "Short" };
-    let position_lots = pos.position_size.value.unsigned_abs();
+    let position_lots = pos.abs_base_lots();
     let trader_pda = TraderKey::derive_pda(
         &authority,
-        trader_view.trader_pda_index,
-        trader_view.trader_subaccount_index,
+        trader_state.trader_pda_index,
+        subaccount.subaccount_index,
     );
 
     // Resolve every input level to an explicit base-lot size. We pin sizes
@@ -2251,97 +2125,41 @@ pub async fn execute_cancel_tpsl_inner(
     let (wallet, authority, _) = resolve_wallet_and_pda(ctx, None).await?;
     let symbol_upper = symbol.to_ascii_uppercase();
 
-    let traders = ctx
-        .http_client
-        .get_traders(&authority)
-        .await
-        .map_err(|e| VulcanError::api("TRADERS_FETCH_FAILED", e.to_string()))?;
-
-    let (trader, pos) = traders
-        .iter()
-        .find_map(|t| {
-            t.positions
-                .iter()
-                .find(|p| p.symbol.to_ascii_uppercase() == symbol_upper)
-                .map(|p| (t, p))
-        })
-        .ok_or_else(|| {
-            VulcanError::validation("NO_POSITION", format!("No open position for '{}'", symbol))
-        })?;
+    let bundle =
+        crate::commands::trader_state::fetch_trader_state_bundle(ctx, &authority, 0).await?;
+    let (subaccount, _pos) = bundle.state.find_position(&symbol_upper).ok_or_else(|| {
+        VulcanError::validation("NO_POSITION", format!("No open position for '{}'", symbol))
+    })?;
 
     let trader_pda = TraderKey::derive_pda(
         &authority,
-        trader.trader_pda_index,
-        trader.trader_subaccount_index,
+        bundle.state.trader_pda_index,
+        subaccount.subaccount_index,
     );
-    let is_long = !pos.position_size.ui.starts_with('-');
+    let triggers = bundle
+        .views
+        .iter()
+        .find(|view| view.trader_subaccount_index == subaccount.subaccount_index)
+        .map(|view| view.conditional_triggers.as_slice())
+        .unwrap_or(&[]);
 
-    // Prefer trader-state API IDs for multi-level TP/SL cancellation. They
-    // encode the on-chain conditional-order index, avoiding an RPC account
-    // fetch in the normal case. Fall back to the RPC decoder if the API ID
-    // shape is missing or invalid.
-    let api_cond_ixs = match build_api_conditional_cancel_ixs(
+    let ixs = build_api_conditional_cancel_ixs(
         ctx,
-        trader,
         authority,
         trader_pda,
+        triggers,
         &symbol_upper,
         cancel_tp,
         cancel_sl,
     )
-    .await
-    {
-        Ok(Some(ixs)) if !ixs.is_empty() => Some(ixs),
-        Ok(_) | Err(_) => None,
-    };
+    .await?;
 
-    let ixs = if let Some(ixs) = api_cond_ixs {
-        ixs
-    } else {
-        let cond_ixs = build_rpc_conditional_cancel_ixs(
-            ctx,
-            trader,
-            authority,
-            trader_pda,
-            &symbol_upper,
-            is_long,
-            cancel_tp,
-            cancel_sl,
-        )
-        .await?;
-        if !cond_ixs.is_empty() {
-            cond_ixs
-        } else {
-            let builder = ctx.tx_builder().await?;
-            // Fall back to the legacy single-SL/TP cancel path.
-            // For longs: TP triggers GreaterThan, SL triggers LessThan
-            // For shorts: TP triggers LessThan, SL triggers GreaterThan
-            let mut ixs = Vec::new();
-            if cancel_tp {
-                let tp_direction = if is_long {
-                    phoenix_rise::Direction::GreaterThan
-                } else {
-                    phoenix_rise::Direction::LessThan
-                };
-                let tp_ixs = builder
-                    .build_cancel_bracket_leg(authority, trader_pda, &symbol_upper, tp_direction)
-                    .map_err(|e| VulcanError::api("BUILD_CANCEL_TP_FAILED", e.to_string()))?;
-                ixs.extend(tp_ixs);
-            }
-            if cancel_sl {
-                let sl_direction = if is_long {
-                    phoenix_rise::Direction::LessThan
-                } else {
-                    phoenix_rise::Direction::GreaterThan
-                };
-                let sl_ixs = builder
-                    .build_cancel_bracket_leg(authority, trader_pda, &symbol_upper, sl_direction)
-                    .map_err(|e| VulcanError::api("BUILD_CANCEL_SL_FAILED", e.to_string()))?;
-                ixs.extend(sl_ixs);
-            }
-            ixs
-        }
-    };
+    if ixs.is_empty() {
+        return Err(VulcanError::validation(
+            "NO_TP_SL_ORDERS",
+            format!("No matching active TP/SL orders found for '{}'", symbol),
+        ));
+    }
 
     let num_ixs = ixs.len();
     let sig = send_or_dry_run(ctx, ixs, &wallet).await?;
@@ -2405,13 +2223,13 @@ fn parse_conditional_order_id(
 /// the caller should use the RPC conditional-order decoder fallback.
 async fn build_api_conditional_cancel_ixs(
     ctx: &AppContext,
-    trader: &TraderView,
     authority: Pubkey,
     trader_pda: Pubkey,
+    triggers: &[crate::commands::conditional_orders::ConditionalTriggerView],
     symbol_upper: &str,
     cancel_tp: bool,
     cancel_sl: bool,
-) -> Result<Option<Vec<solana_sdk::instruction::Instruction>>, VulcanError> {
+) -> Result<Vec<solana_sdk::instruction::Instruction>, VulcanError> {
     let metadata = ctx.metadata().await?;
     let market = metadata.get_market(symbol_upper).ok_or_else(|| {
         VulcanError::validation(
@@ -2423,14 +2241,6 @@ async fn build_api_conditional_cancel_ixs(
     let orderbook = Pubkey::from_str(&market.market_pubkey)
         .map_err(|e| VulcanError::validation("INVALID_MARKET_PUBKEY", e.to_string()))?;
 
-    let triggers = crate::commands::conditional_orders::fetch_conditional_triggers_for_authority(
-        ctx,
-        &authority,
-        trader.trader_pda_index,
-        trader.trader_subaccount_index,
-        metadata,
-    )
-    .await?;
     let mut by_index: BTreeMap<u8, (bool, bool)> = BTreeMap::new();
 
     for trigger in triggers
@@ -2448,7 +2258,13 @@ async fn build_api_conditional_cancel_ixs(
         let Some(parsed) =
             parse_conditional_order_id(&trigger.order_id, trigger.kind, market_asset_id)
         else {
-            return Ok(None);
+            return Err(VulcanError::validation(
+                "INVALID_CONDITIONAL_ORDER_ID",
+                format!(
+                    "Could not parse conditional order id '{}'",
+                    trigger.order_id
+                ),
+            ));
         };
 
         let entry = by_index
@@ -2475,76 +2291,6 @@ async fn build_api_conditional_cancel_ixs(
         )?);
     }
 
-    Ok(Some(ixs))
-}
-
-/// Build per-index cancel instructions against the `ConditionalOrderCollection`
-/// for every active leg matching the requested direction(s). Returns an empty
-/// vec when the collection account does not exist (caller falls back to the
-/// legacy single-SL/TP cancel path).
-///
-/// Disable mapping (matches the on-chain `cancel_trigger(disable_greater,
-/// disable_less)`):
-/// - `disable_first`  → `greater_trigger_order` (long TP / short SL)
-/// - `disable_second` → `less_trigger_order`    (long SL / short TP)
-#[allow(clippy::too_many_arguments)]
-async fn build_rpc_conditional_cancel_ixs(
-    ctx: &AppContext,
-    trader: &TraderView,
-    authority: Pubkey,
-    trader_pda: Pubkey,
-    symbol_upper: &str,
-    is_long: bool,
-    cancel_tp: bool,
-    cancel_sl: bool,
-) -> Result<Vec<solana_sdk::instruction::Instruction>, VulcanError> {
-    let Some(collection) =
-        crate::commands::conditional_orders::fetch_conditional_orders(ctx, trader).await?
-    else {
-        return Ok(Vec::new());
-    };
-
-    let metadata = ctx.metadata().await?;
-    let market = metadata.get_market(symbol_upper).ok_or_else(|| {
-        VulcanError::validation(
-            "UNKNOWN_MARKET",
-            format!("Unknown market: {}", symbol_upper),
-        )
-    })?;
-    let market_asset_id = market.asset_id;
-    let orderbook = Pubkey::from_str(&market.market_pubkey)
-        .map_err(|e| VulcanError::validation("INVALID_MARKET_PUBKEY", e.to_string()))?;
-
-    let mut ixs = Vec::new();
-    for (index, order) in collection.active_orders() {
-        if order.asset_id != market_asset_id {
-            continue;
-        }
-        let greater_active = order.greater_trigger_order.is_active;
-        let less_active = order.less_trigger_order.is_active;
-
-        // Map (cancel_tp, cancel_sl) onto (disable_first, disable_second) by
-        // position side, then mask against actually-active legs.
-        let (cancel_greater, cancel_less) = if is_long {
-            (cancel_tp, cancel_sl)
-        } else {
-            (cancel_sl, cancel_tp)
-        };
-        let disable_first = cancel_greater && greater_active;
-        let disable_second = cancel_less && less_active;
-        if !disable_first && !disable_second {
-            continue;
-        }
-
-        ixs.push(build_cancel_conditional_order_ix(
-            authority,
-            trader_pda,
-            orderbook,
-            index,
-            disable_first,
-            disable_second,
-        )?);
-    }
     Ok(ixs)
 }
 

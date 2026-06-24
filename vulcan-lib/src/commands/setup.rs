@@ -543,11 +543,8 @@ async fn maybe_register_trader(
     }
     println!("    Address: {}", wallet_file.public_key);
 
-    let traders = ctx
-        .http_client
-        .get_traders(&authority)
-        .await
-        .map_err(|e| VulcanError::api("TRADERS_FETCH_FAILED", e.to_string()))?;
+    let traders =
+        crate::commands::trader_state::fetch_computed_trader_views(ctx, &authority).await?;
 
     if let Some(trader) = traders.iter().find(|t| t.trader_subaccount_index == 0) {
         println!("  ✓ Trader account already registered");

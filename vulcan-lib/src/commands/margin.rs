@@ -155,11 +155,8 @@ fn resolve_authority(ctx: &AppContext) -> Result<Pubkey, VulcanError> {
 pub async fn execute_status_inner(ctx: &AppContext) -> Result<MarginStatusResult, VulcanError> {
     let (_, authority) = crate::commands::trade::resolve_authority_name(ctx)?;
 
-    let traders = ctx
-        .http_client
-        .get_traders(&authority)
-        .await
-        .map_err(|e| VulcanError::api("TRADERS_FETCH_FAILED", e.to_string()))?;
+    let traders =
+        crate::commands::trader_state::fetch_computed_trader_views(ctx, &authority).await?;
 
     let trader = traders
         .iter()
@@ -175,9 +172,8 @@ pub async fn execute_status_inner(ctx: &AppContext) -> Result<MarginStatusResult
 }
 
 pub(crate) fn project_margin_status(
-    trader: &phoenix_rise::types::TraderView,
+    trader: &crate::commands::trader_state::ComputedTraderView,
 ) -> MarginStatusResult {
-    let total_orders: usize = trader.limit_orders.values().map(|v| v.len()).sum();
     let eff_for_w: f64 = trader
         .effective_collateral_for_withdrawals
         .ui
@@ -196,11 +192,11 @@ pub(crate) fn project_margin_status(
         unrealized_pnl: trader.unrealized_pnl.ui.clone(),
         initial_margin: trader.initial_margin.ui.clone(),
         maintenance_margin: trader.maintenance_margin.ui.clone(),
-        risk_state: format!("{:?}", trader.risk_state),
-        risk_tier: format!("{:?}", trader.risk_tier),
+        risk_state: trader.risk_state.clone(),
+        risk_tier: trader.risk_tier.clone(),
         available_to_withdraw,
         num_positions: trader.positions.len(),
-        num_open_orders: total_orders,
+        num_open_orders: trader.num_open_limit_orders + trader.num_open_conditional_orders,
     }
 }
 
@@ -270,11 +266,38 @@ pub async fn execute_transfer_child_to_parent_inner(
     ctx: &AppContext,
     child: u8,
 ) -> Result<SweepResult, VulcanError> {
+    if child == 0 {
+        return Err(VulcanError::validation(
+            "INVALID_SUBACCOUNT",
+            "Child subaccount must be greater than 0.",
+        ));
+    }
+
     let (wallet, authority, _) = crate::commands::trade::resolve_wallet_and_pda(ctx, None).await?;
+    let trader_state =
+        crate::commands::trader_state::fetch_trader_state_snapshot(ctx, &authority, 0).await?;
+    let subaccount = trader_state.find_subaccount(child).ok_or_else(|| {
+        VulcanError::validation(
+            "SUBACCOUNT_NOT_FOUND",
+            format!("Subaccount {} is not registered.", child),
+        )
+    })?;
+    if let Some(reason) = subaccount.sweep_blocker(None) {
+        return Err(VulcanError::validation(
+            "SWEEP_BLOCKED",
+            format!("Cannot sweep subaccount {}: {}", child, reason),
+        ));
+    }
+
     let builder = ctx.tx_builder().await?;
 
-    let child_pda = phoenix_rise::types::TraderKey::derive_pda(&authority, 0, child);
-    let parent_pda = phoenix_rise::types::TraderKey::derive_pda(&authority, 0, 0);
+    let child_pda = phoenix_rise::types::TraderKey::derive_pda(
+        &authority,
+        trader_state.trader_pda_index,
+        child,
+    );
+    let parent_pda =
+        phoenix_rise::types::TraderKey::derive_pda(&authority, trader_state.trader_pda_index, 0);
 
     let ixs = builder
         .build_transfer_collateral_child_to_parent(authority, child_pda, parent_pda)
@@ -296,11 +319,38 @@ pub async fn execute_sync_parent_to_child_inner(
     ctx: &AppContext,
     child: u8,
 ) -> Result<SweepResult, VulcanError> {
+    if child == 0 {
+        return Err(VulcanError::validation(
+            "INVALID_SUBACCOUNT",
+            "Child subaccount must be greater than 0.",
+        ));
+    }
+
     let (wallet, authority, _) = crate::commands::trade::resolve_wallet_and_pda(ctx, None).await?;
+    let trader_state =
+        crate::commands::trader_state::fetch_trader_state_snapshot(ctx, &authority, 0).await?;
+    if !trader_state.has_cross_margin_subaccount() {
+        return Err(VulcanError::api(
+            "NO_PARENT_TRADER_ACCOUNT",
+            "Register the cross-margin trader account before syncing child subaccounts.",
+        ));
+    }
+    if trader_state.find_subaccount(child).is_none() {
+        return Err(VulcanError::validation(
+            "SUBACCOUNT_NOT_FOUND",
+            format!("Subaccount {} is not registered.", child),
+        ));
+    }
+
     let builder = ctx.tx_builder().await?;
 
-    let parent_pda = phoenix_rise::types::TraderKey::derive_pda(&authority, 0, 0);
-    let child_pda = phoenix_rise::types::TraderKey::derive_pda(&authority, 0, child);
+    let parent_pda =
+        phoenix_rise::types::TraderKey::derive_pda(&authority, trader_state.trader_pda_index, 0);
+    let child_pda = phoenix_rise::types::TraderKey::derive_pda(
+        &authority,
+        trader_state.trader_pda_index,
+        child,
+    );
 
     let ixs = builder
         .build_sync_parent_to_child(authority, parent_pda, child_pda)
@@ -325,24 +375,13 @@ pub async fn execute_add_collateral_inner(
 ) -> Result<TransferResult, VulcanError> {
     let symbol_upper = symbol.to_ascii_uppercase();
 
-    // Fetch all trader views to find the isolated subaccount for this symbol
     let (wallet, authority, _) = crate::commands::trade::resolve_wallet_and_pda(ctx, None).await?;
 
-    let traders = ctx
-        .http_client
-        .get_traders(&authority)
-        .await
-        .map_err(|e| VulcanError::api("TRADERS_FETCH_FAILED", e.to_string()))?;
-
-    // Find the isolated subaccount that holds a position in this symbol
-    let iso_view = traders
-        .iter()
-        .find(|t| {
-            t.trader_subaccount_index > 0
-                && t.positions
-                    .iter()
-                    .any(|p| p.symbol.to_ascii_uppercase() == symbol_upper)
-        })
+    let trader_state =
+        crate::commands::trader_state::fetch_trader_state_snapshot(ctx, &authority, 0).await?;
+    let (subaccount, _) = trader_state
+        .find_position(&symbol_upper)
+        .filter(|(subaccount, _)| subaccount.subaccount_index > 0)
         .ok_or_else(|| {
             VulcanError::validation(
                 "NO_ISOLATED_POSITION",
@@ -350,7 +389,7 @@ pub async fn execute_add_collateral_inner(
             )
         })?;
 
-    let sub_idx = iso_view.trader_subaccount_index;
+    let sub_idx = subaccount.subaccount_index;
     let builder = ctx.tx_builder().await?;
 
     let src_pda = phoenix_rise::types::TraderKey::derive_pda(&authority, 0, 0);

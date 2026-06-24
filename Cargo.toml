@@ -6,7 +6,7 @@ resolver = "2"
 vulcan-lib = { path = "vulcan-lib" }
 
 # Rise SDK
-phoenix-rise = "0.1.3"
+phoenix-rise = "0.1.14"
 
 # CLI
 clap = { version = "4", features = ["derive"] }

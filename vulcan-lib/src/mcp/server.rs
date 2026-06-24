@@ -865,6 +865,7 @@ impl VulcanMcpServer {
                     sl,
                     isolated,
                     collateral,
+                    None,
                     reduce_only,
                 )
                 .await?;

@@ -82,6 +82,9 @@ pub enum TradeCommand {
         /// USDC collateral for isolated subaccount
         #[arg(long, requires = "isolated")]
         collateral: Option<f64>,
+        /// Explicit isolated subaccount index to place on
+        #[arg(long, requires = "isolated")]
+        subaccount_index: Option<u8>,
         /// Reduce-only order
         #[arg(long)]
         reduce_only: bool,
@@ -107,6 +110,9 @@ pub enum TradeCommand {
         /// USDC collateral for isolated subaccount
         #[arg(long, requires = "isolated")]
         collateral: Option<f64>,
+        /// Explicit isolated subaccount index to place on
+        #[arg(long, requires = "isolated")]
+        subaccount_index: Option<u8>,
         /// Reduce-only order
         #[arg(long)]
         reduce_only: bool,

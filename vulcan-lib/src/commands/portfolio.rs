@@ -1,13 +1,18 @@
 //! Portfolio snapshot — combined margin / positions / orders in one fetch.
 
 use crate::cli::portfolio::PortfolioArgs;
-use crate::commands::conditional_orders::{fetch_conditional_triggers, triggers_to_order_infos};
+use crate::commands::conditional_orders::{
+    trader_state_limit_orders_to_order_infos, triggers_to_order_infos,
+};
 use crate::commands::margin::{project_margin_status, MarginStatusResult};
-use crate::commands::position::{get_all_trader_views, project_positions, PositionListResult};
-use crate::commands::trade::{project_orders, OrdersResult};
+use crate::commands::position::{
+    get_all_trader_state_bundle, project_positions, PositionListResult,
+};
+use crate::commands::trade::OrdersResult;
 use crate::context::AppContext;
 use crate::error::VulcanError;
 use crate::output::{render_success, TableRenderable};
+use phoenix_rise::types::Decimal as UiDecimal;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -149,40 +154,37 @@ pub async fn execute_snapshot_inner(
         return Ok(PortfolioSnapshot::default());
     }
 
-    let (traders, _) = get_all_trader_views(ctx).await?;
+    let (bundle, _) = get_all_trader_state_bundle(ctx).await?;
+    let traders = &bundle.views;
 
-    let trader_xm = if sections.margin || sections.orders {
-        Some(find_cross_margin(&traders)?)
+    let trader_xm = if sections.margin {
+        Some(find_cross_margin(traders)?)
     } else {
         None
     };
 
-    // Fetch conditional TP/SL triggers once when we'll need them for either
-    // margin counting or the orders section. This uses v1 trader-state, not RPC.
-    let conditional_extras = if let Some(trader) = trader_xm {
-        let metadata = ctx.metadata().await?;
-        Some(fetch_conditional_triggers(ctx, trader, metadata).await?)
+    let orders = if sections.orders {
+        let mut orders =
+            trader_state_limit_orders_to_order_infos(&bundle.order_data.limit_orders, None);
+        orders.extend(triggers_to_order_infos(
+            &bundle.order_data.conditional_triggers,
+            None,
+        ));
+        Some(OrdersResult {
+            symbol: None,
+            orders,
+        })
     } else {
         None
     };
 
-    let mut margin = sections
+    let margin = sections
         .margin
         .then(|| project_margin_status(trader_xm.unwrap()));
-    if let (Some(m), Some(triggers)) = (margin.as_mut(), conditional_extras.as_ref()) {
-        m.num_open_orders += triggers.len();
-    }
-
-    let mut orders = sections
-        .orders
-        .then(|| project_orders(trader_xm.unwrap(), None));
-    if let (Some(o), Some(triggers)) = (orders.as_mut(), conditional_extras.as_ref()) {
-        o.orders.extend(triggers_to_order_infos(triggers, None));
-    }
 
     let (isolated_subaccounts, totals) = if sections.margin {
-        let isos = collect_isolated_subaccounts(&traders);
-        let totals = compute_totals(&traders);
+        let isos = collect_isolated_subaccounts(traders);
+        let totals = compute_totals(traders);
         ((!isos.is_empty()).then_some(isos), Some(totals))
     } else {
         (None, None)
@@ -191,14 +193,14 @@ pub async fn execute_snapshot_inner(
     Ok(PortfolioSnapshot {
         margin,
         orders,
-        positions: sections.positions.then(|| project_positions(&traders)),
+        positions: sections.positions.then(|| project_positions(traders)),
         isolated_subaccounts,
         totals,
     })
 }
 
 fn collect_isolated_subaccounts(
-    traders: &[phoenix_rise::types::TraderView],
+    traders: &[crate::commands::trader_state::ComputedTraderView],
 ) -> Vec<IsolatedSubaccountSummary> {
     let mut out = Vec::new();
     for t in traders {
@@ -220,27 +222,41 @@ fn collect_isolated_subaccounts(
     out
 }
 
-fn compute_totals(traders: &[phoenix_rise::types::TraderView]) -> AccountTotals {
-    let parse = |s: &str| -> f64 { s.parse::<f64>().unwrap_or(0.0) };
-    let mut total_collateral = 0.0_f64;
-    let mut total_account_value = 0.0_f64;
-    let mut total_unrealized_pnl = 0.0_f64;
+fn compute_totals(traders: &[crate::commands::trader_state::ComputedTraderView]) -> AccountTotals {
+    let mut total_collateral = 0_i128;
+    let mut total_account_value = 0_i128;
+    let mut total_unrealized_pnl = 0_i128;
     for t in traders {
-        total_collateral += parse(&t.collateral_balance.ui);
-        total_account_value += parse(&t.portfolio_value.ui);
-        total_unrealized_pnl += parse(&t.unrealized_pnl.ui);
+        total_collateral += decimal_to_6dp(&t.collateral_balance);
+        total_account_value += decimal_to_6dp(&t.portfolio_value);
+        total_unrealized_pnl += decimal_to_6dp(&t.unrealized_pnl);
     }
     AccountTotals {
-        total_collateral: format!("{:.6}", total_collateral),
-        total_account_value: format!("{:.6}", total_account_value),
-        total_unrealized_pnl: format!("{:.6}", total_unrealized_pnl),
+        total_collateral: format_6dp(total_collateral),
+        total_account_value: format_6dp(total_account_value),
+        total_unrealized_pnl: format_6dp(total_unrealized_pnl),
         num_subaccounts: traders.len(),
     }
 }
 
+fn decimal_to_6dp(decimal: &UiDecimal) -> i128 {
+    let value = decimal.value as i128;
+    match decimal.decimals.cmp(&6) {
+        std::cmp::Ordering::Equal => value,
+        std::cmp::Ordering::Less => value * 10_i128.pow((6 - decimal.decimals) as u32),
+        std::cmp::Ordering::Greater => value / 10_i128.pow((decimal.decimals - 6) as u32),
+    }
+}
+
+fn format_6dp(value: i128) -> String {
+    let sign = if value < 0 { "-" } else { "" };
+    let abs = value.abs();
+    format!("{}{}.{:06}", sign, abs / 1_000_000, abs % 1_000_000)
+}
+
 fn find_cross_margin(
-    traders: &[phoenix_rise::types::TraderView],
-) -> Result<&phoenix_rise::types::TraderView, VulcanError> {
+    traders: &[crate::commands::trader_state::ComputedTraderView],
+) -> Result<&crate::commands::trader_state::ComputedTraderView, VulcanError> {
     traders
         .iter()
         .find(|t| t.trader_subaccount_index == 0)
