@@ -311,7 +311,7 @@ pub async fn login_with_signer(
     )?;
     Ok(ApiAuthLoginResult {
         status: status(ctx),
-        note: "Stored session will be loaded by new CLI/MCP clients; restart long-running MCP servers to ensure all API clients use it.".to_string(),
+        note: "Stored session will be loaded by current and future CLI/MCP API clients through the persistent session store.".to_string(),
     })
 }
 

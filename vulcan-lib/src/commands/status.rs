@@ -226,34 +226,38 @@ pub async fn execute_inner(ctx: &AppContext) -> Result<StatusReport, VulcanError
     // Trader registration check
     let trader = if let Some(pk) = &wallet.public_key {
         match solana_pubkey::Pubkey::try_from(pk.as_str()) {
-            Ok(authority) => match ctx.http_client.get_traders(&authority).await {
-                Ok(traders) => {
-                    let cross = traders.iter().find(|t| t.trader_subaccount_index == 0);
-                    match cross {
-                        Some(t) => TraderStatus {
-                            ok: true,
-                            registered: true,
-                            trader_key: Some(t.trader_key.clone()),
-                            collateral: Some(t.collateral_balance.ui.clone()),
-                            error: None,
-                        },
-                        None => TraderStatus {
-                            ok: true,
-                            registered: false,
-                            trader_key: None,
-                            collateral: None,
-                            error: None,
-                        },
+            Ok(authority) => {
+                match crate::commands::trader_state::fetch_computed_trader_views(ctx, &authority)
+                    .await
+                {
+                    Ok(traders) => {
+                        let cross = traders.iter().find(|t| t.trader_subaccount_index == 0);
+                        match cross {
+                            Some(t) => TraderStatus {
+                                ok: true,
+                                registered: true,
+                                trader_key: Some(t.trader_key.clone()),
+                                collateral: Some(t.collateral_balance.ui.clone()),
+                                error: None,
+                            },
+                            None => TraderStatus {
+                                ok: true,
+                                registered: false,
+                                trader_key: None,
+                                collateral: None,
+                                error: None,
+                            },
+                        }
                     }
+                    Err(e) => TraderStatus {
+                        ok: false,
+                        registered: false,
+                        trader_key: None,
+                        collateral: None,
+                        error: Some(e.to_string()),
+                    },
                 }
-                Err(e) => TraderStatus {
-                    ok: false,
-                    registered: false,
-                    trader_key: None,
-                    collateral: None,
-                    error: Some(e.to_string()),
-                },
-            },
+            }
             Err(_) => TraderStatus {
                 ok: false,
                 registered: false,

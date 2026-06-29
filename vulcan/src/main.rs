@@ -324,6 +324,7 @@ fn command_should_auto_api_login(command: &Command) -> bool {
         Command::Agent(AgentCommand::Health { .. }) | Command::Status => true,
         Command::Auth(AuthCommand::Status) => true,
         Command::Auth(AuthCommand::Login | AuthCommand::Logout) => false,
+        Command::Portfolio(_) => true,
         Command::Trade(cmd) => matches!(
             cmd,
             TradeCommand::MarketBuy { .. }
@@ -332,18 +333,23 @@ fn command_should_auto_api_login(command: &Command) -> bool {
                 | TradeCommand::LimitSell { .. }
                 | TradeCommand::Cancel { .. }
                 | TradeCommand::CancelAll { .. }
+                | TradeCommand::Orders { .. }
                 | TradeCommand::SetTpsl { .. }
                 | TradeCommand::CancelTpsl { .. }
         ),
         Command::Position(cmd) => matches!(
             cmd,
-            PositionCommand::Close { .. }
+            PositionCommand::List
+                | PositionCommand::Show { .. }
+                | PositionCommand::Close { .. }
+                | PositionCommand::CloseAll
                 | PositionCommand::Reduce { .. }
                 | PositionCommand::TpSl { .. }
         ),
         Command::Margin(cmd) => matches!(
             cmd,
-            MarginCommand::Deposit { .. }
+            MarginCommand::Status
+                | MarginCommand::Deposit { .. }
                 | MarginCommand::Withdraw { .. }
                 | MarginCommand::Transfer { .. }
                 | MarginCommand::TransferChildToParent { .. }
@@ -352,7 +358,10 @@ fn command_should_auto_api_login(command: &Command) -> bool {
         ),
         Command::Account(cmd) => matches!(
             cmd,
-            AccountCommand::Register { .. } | AccountCommand::CreateSubaccount { .. }
+            AccountCommand::Register { .. }
+                | AccountCommand::Info
+                | AccountCommand::Subaccounts
+                | AccountCommand::CreateSubaccount { .. }
         ),
         Command::Strategy(StrategyCommand::Twap(TwapCommand::Start(args))) => {
             matches!(
@@ -502,7 +511,38 @@ fn mcp_wallet_password_required_error() -> VulcanError {
         "WALLET_PASSWORD_REQUIRED",
         "Live MCP session needs a wallet password but VULCAN_WALLET_PASSWORD is unset or empty. \
          If you installed Vulcan as a plugin (Claude Code marketplace), fill in the `Wallet password` field \
-         in the plugin's settings UI — the host stores it in your OS keychain and passes it in here. \
+         in the plugin's settings UI - the host stores it in your OS keychain and passes it in here. \
          For manual MCP setups, set VULCAN_WALLET_PASSWORD in the MCP server's env block.",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vulcan_lib::cli::account::AccountCommand;
+    use vulcan_lib::cli::margin::MarginCommand;
+    use vulcan_lib::cli::portfolio::PortfolioArgs;
+    use vulcan_lib::cli::position::PositionCommand;
+    use vulcan_lib::cli::trade::TradeCommand;
+
+    #[test]
+    fn trader_portfolio_reads_prepare_api_auth_session() {
+        let commands = vec![
+            Command::Portfolio(PortfolioArgs {
+                include: Vec::new(),
+            }),
+            Command::Trade(TradeCommand::Orders { symbol: None }),
+            Command::Position(PositionCommand::List),
+            Command::Position(PositionCommand::Show {
+                symbol: "SOL".to_string(),
+            }),
+            Command::Margin(MarginCommand::Status),
+            Command::Account(AccountCommand::Info),
+            Command::Account(AccountCommand::Subaccounts),
+        ];
+
+        for command in commands {
+            assert!(command_should_auto_api_login(&command), "{command:?}");
+        }
+    }
 }

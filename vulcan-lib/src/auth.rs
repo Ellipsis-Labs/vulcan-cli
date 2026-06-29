@@ -46,9 +46,6 @@ fn build_authenticated_http_client(
     vulcan_dir: &Path,
 ) -> Result<PhoenixHttpClient, String> {
     let path = session_path(vulcan_dir);
-    if !path.exists() {
-        return PhoenixHttpClient::new_public(api_url).map_err(|e| e.to_string());
-    }
     let auth = PhoenixHttpAuthConfig::new()
         .with_file_session_store_path(path)
         .map_err(|e| e.to_string())?;
@@ -104,4 +101,21 @@ pub fn clear_session(vulcan_dir: &Path) -> Result<(), VulcanError> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn http_client_uses_session_store_before_session_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = VulcanConfig::default();
+
+        let (client, load_error) = build_http_client(&config, tmp.path()).unwrap();
+
+        assert!(load_error.is_none());
+        assert!(client.auth().is_some());
+        assert!(!session_path(tmp.path()).exists());
+    }
 }

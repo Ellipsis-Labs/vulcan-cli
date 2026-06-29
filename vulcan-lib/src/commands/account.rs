@@ -151,11 +151,8 @@ pub async fn execute(ctx: &AppContext, cmd: AccountCommand) -> Result<(), Vulcan
         AccountCommand::Info => {
             let (_, authority) = resolve_authority(ctx)?;
 
-            let traders = ctx
-                .http_client
-                .get_traders(&authority)
-                .await
-                .map_err(|e| VulcanError::api("TRADERS_FETCH_FAILED", e.to_string()))?;
+            let traders =
+                crate::commands::trader_state::fetch_computed_trader_views(ctx, &authority).await?;
 
             let trader = traders
                 .iter()
@@ -167,20 +164,18 @@ pub async fn execute(ctx: &AppContext, cmd: AccountCommand) -> Result<(), Vulcan
                     )
                 })?;
 
-            let total_orders: usize = trader.limit_orders.values().map(|v| v.len()).sum();
-
             let result = AccountInfoResult {
                 authority: trader.authority.clone(),
                 trader_key: trader.trader_key.clone(),
                 pda_index: trader.trader_pda_index,
                 subaccount_index: trader.trader_subaccount_index,
-                state: format!("{:?}", trader.state),
+                state: trader.state.clone(),
                 collateral_balance: trader.collateral_balance.ui.clone(),
                 portfolio_value: trader.portfolio_value.ui.clone(),
-                risk_state: format!("{:?}", trader.risk_state),
-                risk_tier: format!("{:?}", trader.risk_tier),
+                risk_state: trader.risk_state.clone(),
+                risk_tier: trader.risk_tier.clone(),
                 num_positions: trader.positions.len(),
-                num_open_orders: total_orders,
+                num_open_orders: trader.num_open_limit_orders + trader.num_open_conditional_orders,
                 max_positions: trader.max_positions,
             };
 
@@ -191,11 +186,8 @@ pub async fn execute(ctx: &AppContext, cmd: AccountCommand) -> Result<(), Vulcan
         AccountCommand::Subaccounts => {
             let (_, authority) = resolve_authority(ctx)?;
 
-            let traders = ctx
-                .http_client
-                .get_traders(&authority)
-                .await
-                .map_err(|e| VulcanError::api("TRADERS_FETCH_FAILED", e.to_string()))?;
+            let traders =
+                crate::commands::trader_state::fetch_computed_trader_views(ctx, &authority).await?;
 
             let subaccounts: Vec<SubaccountInfo> = traders
                 .iter()
@@ -203,7 +195,7 @@ pub async fn execute(ctx: &AppContext, cmd: AccountCommand) -> Result<(), Vulcan
                     trader_key: t.trader_key.clone(),
                     pda_index: t.trader_pda_index,
                     subaccount_index: t.trader_subaccount_index,
-                    state: format!("{:?}", t.state),
+                    state: t.state.clone(),
                     collateral_balance: t.collateral_balance.ui.clone(),
                     num_positions: t.positions.len(),
                     margin_type: if t.trader_subaccount_index == 0 {
@@ -237,9 +229,40 @@ pub async fn execute(ctx: &AppContext, cmd: AccountCommand) -> Result<(), Vulcan
             let (wallet_name, authority) = resolve_authority(ctx)?;
             let builder = ctx.tx_builder().await?;
 
-            let ixs = builder
+            let state = crate::commands::trader_state::try_fetch_trader_state_snapshot(
+                ctx, &authority, pda_index,
+            )
+            .await?;
+            let state = state.ok_or_else(|| {
+                VulcanError::api(
+                    "NO_PARENT_TRADER_ACCOUNT",
+                    "Register the cross-margin trader account before creating isolated subaccounts.",
+                )
+            })?;
+            if !state.has_cross_margin_subaccount() {
+                return Err(VulcanError::api(
+                    "NO_PARENT_TRADER_ACCOUNT",
+                    "Register the cross-margin trader account before creating isolated subaccounts.",
+                ));
+            }
+            if state.find_subaccount(subaccount_index).is_some() {
+                return Err(VulcanError::validation(
+                    "SUBACCOUNT_EXISTS",
+                    format!("Subaccount {} is already registered.", subaccount_index),
+                ));
+            }
+
+            let mut ixs = builder
                 .build_register_trader(authority, pda_index, subaccount_index)
                 .map_err(|e| VulcanError::api("BUILD_REGISTER_FAILED", e.to_string()))?;
+            let parent_pda = phoenix_rise::types::TraderKey::derive_pda(&authority, pda_index, 0);
+            let child_pda =
+                phoenix_rise::types::TraderKey::derive_pda(&authority, pda_index, subaccount_index);
+            ixs.extend(
+                builder
+                    .build_sync_parent_to_child(authority, parent_pda, child_pda)
+                    .map_err(|e| VulcanError::api("BUILD_SYNC_FAILED", e.to_string()))?,
+            );
 
             let (wallet, _, _) =
                 crate::commands::trade::resolve_wallet_and_pda(ctx, Some(&wallet_name)).await?;
@@ -269,11 +292,8 @@ pub async fn execute(ctx: &AppContext, cmd: AccountCommand) -> Result<(), Vulcan
 pub async fn execute_info_inner(ctx: &AppContext) -> Result<AccountInfoResult, VulcanError> {
     let (_, authority) = resolve_authority(ctx)?;
 
-    let traders = ctx
-        .http_client
-        .get_traders(&authority)
-        .await
-        .map_err(|e| VulcanError::api("TRADERS_FETCH_FAILED", e.to_string()))?;
+    let traders =
+        crate::commands::trader_state::fetch_computed_trader_views(ctx, &authority).await?;
 
     let trader = traders
         .iter()
@@ -285,20 +305,18 @@ pub async fn execute_info_inner(ctx: &AppContext) -> Result<AccountInfoResult, V
             )
         })?;
 
-    let total_orders: usize = trader.limit_orders.values().map(|v| v.len()).sum();
-
     Ok(AccountInfoResult {
         authority: trader.authority.clone(),
         trader_key: trader.trader_key.clone(),
         pda_index: trader.trader_pda_index,
         subaccount_index: trader.trader_subaccount_index,
-        state: format!("{:?}", trader.state),
+        state: trader.state.clone(),
         collateral_balance: trader.collateral_balance.ui.clone(),
         portfolio_value: trader.portfolio_value.ui.clone(),
-        risk_state: format!("{:?}", trader.risk_state),
-        risk_tier: format!("{:?}", trader.risk_tier),
+        risk_state: trader.risk_state.clone(),
+        risk_tier: trader.risk_tier.clone(),
         num_positions: trader.positions.len(),
-        num_open_orders: total_orders,
+        num_open_orders: trader.num_open_limit_orders + trader.num_open_conditional_orders,
         max_positions: trader.max_positions,
     })
 }
@@ -343,12 +361,11 @@ async fn is_cross_margin_registered(
     ctx: &AppContext,
     authority: &Pubkey,
 ) -> Result<bool, VulcanError> {
-    let traders = ctx
-        .http_client
-        .get_traders(authority)
-        .await
-        .map_err(|e| VulcanError::api("TRADERS_FETCH_FAILED", e.to_string()))?;
-    Ok(traders.iter().any(|t| t.trader_subaccount_index == 0))
+    Ok(
+        crate::commands::trader_state::try_fetch_trader_state_snapshot(ctx, authority, 0)
+            .await?
+            .is_some_and(|state| state.has_cross_margin_subaccount()),
+    )
 }
 
 async fn activate_registration_code(

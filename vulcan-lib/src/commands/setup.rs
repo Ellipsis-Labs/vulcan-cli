@@ -543,16 +543,16 @@ async fn maybe_register_trader(
     }
     println!("    Address: {}", wallet_file.public_key);
 
-    let traders = ctx
-        .http_client
-        .get_traders(&authority)
-        .await
-        .map_err(|e| VulcanError::api("TRADERS_FETCH_FAILED", e.to_string()))?;
-
-    if let Some(trader) = traders.iter().find(|t| t.trader_subaccount_index == 0) {
-        println!("  ✓ Trader account already registered");
-        println!("    Trader PDA: {}", trader.trader_key);
-        return Ok(());
+    if let Some(state) =
+        crate::commands::trader_state::try_fetch_trader_state_snapshot(ctx, &authority, 0).await?
+    {
+        if state.find_subaccount(0).is_some() {
+            let trader_key =
+                phoenix_rise::types::TraderKey::new_with_idx(authority, state.trader_pda_index, 0);
+            println!("  ✓ Trader account already registered");
+            println!("    Trader PDA: {}", trader_key.pda());
+            return Ok(());
+        }
     }
 
     println!("  ○ Trader account is not registered.");

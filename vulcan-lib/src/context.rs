@@ -6,11 +6,30 @@ use crate::mcp::session_wallet::SessionWallet;
 use crate::output::OutputFormat;
 use crate::wallet::WalletStore;
 use anyhow::Result;
-use phoenix_rise::types::PhoenixMetadata;
+use phoenix_rise::math::{
+    BaseLots, BasisPoints, Constant, LeverageTier, LeverageTiers, PerpAssetMetadata,
+    QuoteLotsPerBaseLotPerTick, SignedQuoteLotsPerBaseLot, Ticks, WrapperNum,
+};
+use phoenix_rise::types::accounts::{PerpAssetMap, PerpAssetMetadata as AccountPerpAssetMetadata};
+use phoenix_rise::types::{ExchangeSnapshotView, PhoenixMetadata};
 use phoenix_rise::{PhoenixHttpClient, PhoenixTxBuilder};
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+use solana_pubkey::Pubkey;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::OnceCell;
+
+const EXCHANGE_SNAPSHOT_CACHE_TTL_SECS: u64 = 6 * 60 * 60;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CachedExchangeSnapshot {
+    api_url: String,
+    fetched_at_unix: u64,
+    snapshot: ExchangeSnapshotView,
+}
 
 /// Shared application context available to all commands.
 pub struct AppContext {
@@ -151,13 +170,80 @@ impl AppContext {
     pub async fn metadata(&self) -> Result<&PhoenixMetadata, crate::error::VulcanError> {
         self.metadata
             .get_or_try_init(|| async {
-                let exchange = self.http_client.get_exchange().await.map_err(|e| {
-                    crate::error::VulcanError::api("EXCHANGE_FETCH_FAILED", e.to_string())
-                })?;
-                let view: phoenix_rise::types::ExchangeView = exchange.into();
+                let exchange = self.exchange_snapshot().await?;
+                let view: phoenix_rise::types::ExchangeView =
+                    exchange.into_exchange_response().into();
                 Ok(PhoenixMetadata::new(view))
             })
             .await
+    }
+
+    /// Get the exchange snapshot using a persistent local cache.
+    pub async fn exchange_snapshot(
+        &self,
+    ) -> Result<ExchangeSnapshotView, crate::error::VulcanError> {
+        if let Some(snapshot) =
+            load_cached_exchange_snapshot(&self.vulcan_dir, &self.config.network.api_url, false)?
+        {
+            return Ok(snapshot);
+        }
+
+        match self.http_client.get_exchange_snapshot().await {
+            Ok(snapshot) => {
+                store_cached_exchange_snapshot(
+                    &self.vulcan_dir,
+                    &self.config.network.api_url,
+                    &snapshot,
+                )?;
+                Ok(snapshot)
+            }
+            Err(err) => {
+                if let Some(snapshot) = load_cached_exchange_snapshot(
+                    &self.vulcan_dir,
+                    &self.config.network.api_url,
+                    true,
+                )? {
+                    return Ok(snapshot);
+                }
+                Err(crate::error::VulcanError::api(
+                    "EXCHANGE_SNAPSHOT_FETCH_FAILED",
+                    err.to_string(),
+                ))
+            }
+        }
+    }
+
+    /// Hydrate SDK margin metadata from the on-chain PerpAssetMap.
+    ///
+    /// The exchange snapshot carries ix-building keys/configs. PerpAssetMap
+    /// carries live mark prices and on-chain risk params, so this is a robust
+    /// fallback when API mark-price hydration is unavailable.
+    pub(crate) async fn hydrate_metadata_from_perp_asset_map_rpc(
+        &self,
+        metadata: &mut PhoenixMetadata,
+    ) -> Result<(), crate::error::VulcanError> {
+        let perp_asset_map = Pubkey::from_str(&metadata.keys().perp_asset_map).map_err(|e| {
+            crate::error::VulcanError::validation("INVALID_PERP_ASSET_MAP", e.to_string())
+        })?;
+        let account = self
+            .rpc_client_async()
+            .get_account(&perp_asset_map)
+            .await
+            .map_err(|e| {
+                crate::error::VulcanError::api("PERP_ASSET_MAP_FETCH_FAILED", e.to_string())
+            })?;
+        let perp_asset_map = PerpAssetMap::try_from_account_bytes(&account.data).map_err(|e| {
+            crate::error::VulcanError::api("PERP_ASSET_MAP_DECODE_FAILED", e.to_string())
+        })?;
+
+        for (symbol, account_metadata) in perp_asset_map.iter() {
+            let perp_metadata = perp_asset_metadata_from_account(symbol, account_metadata)?;
+            metadata
+                .all_perp_asset_metadata_mut()
+                .insert(symbol.to_ascii_uppercase(), perp_metadata);
+        }
+
+        Ok(())
     }
 
     /// Create a transaction builder from cached metadata.
@@ -217,5 +303,236 @@ impl AppContext {
             self.config.network.rpc_url.clone(),
             solana_sdk::commitment_config::CommitmentConfig::confirmed(),
         )
+    }
+}
+
+fn exchange_cache_dir(vulcan_dir: &Path) -> PathBuf {
+    vulcan_dir.join("cache")
+}
+
+fn exchange_snapshot_cache_path(vulcan_dir: &Path) -> PathBuf {
+    exchange_cache_dir(vulcan_dir).join("exchange-snapshot.json")
+}
+
+fn now_unix() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
+}
+
+fn load_cached_exchange_snapshot(
+    vulcan_dir: &Path,
+    api_url: &str,
+    allow_stale: bool,
+) -> Result<Option<ExchangeSnapshotView>, crate::error::VulcanError> {
+    let path = exchange_snapshot_cache_path(vulcan_dir);
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return Ok(None);
+    };
+    let Ok(cached) = serde_json::from_str::<CachedExchangeSnapshot>(&content) else {
+        return Ok(None);
+    };
+    if cached.api_url != api_url {
+        return Ok(None);
+    }
+    let age = now_unix().saturating_sub(cached.fetched_at_unix);
+    if !allow_stale && age > EXCHANGE_SNAPSHOT_CACHE_TTL_SECS {
+        return Ok(None);
+    }
+    Ok(Some(cached.snapshot))
+}
+
+fn store_cached_exchange_snapshot(
+    vulcan_dir: &Path,
+    api_url: &str,
+    snapshot: &ExchangeSnapshotView,
+) -> Result<(), crate::error::VulcanError> {
+    let dir = exchange_cache_dir(vulcan_dir);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| crate::error::VulcanError::config("CACHE_WRITE_FAILED", e.to_string()))?;
+    let payload = serde_json::to_string_pretty(&CachedExchangeSnapshot {
+        api_url: api_url.to_string(),
+        fetched_at_unix: now_unix(),
+        snapshot: snapshot.clone(),
+    })
+    .map_err(|e| crate::error::VulcanError::config("CACHE_WRITE_FAILED", e.to_string()))?;
+    std::fs::write(exchange_snapshot_cache_path(vulcan_dir), payload)
+        .map_err(|e| crate::error::VulcanError::config("CACHE_WRITE_FAILED", e.to_string()))
+}
+
+fn perp_asset_metadata_from_account(
+    symbol: &str,
+    account_metadata: &AccountPerpAssetMetadata,
+) -> Result<PerpAssetMetadata, crate::error::VulcanError> {
+    let static_params = &account_metadata.static_market_params;
+    let risk_params = &account_metadata.risk_params;
+    let mark_price_ticks = Ticks::new_checked(account_metadata.oracle_price.mark_price.price.ticks)
+        .map_err(|e| crate::error::VulcanError::api("PERP_ASSET_MAP_INVALID", e.to_string()))?;
+    let leverage_tiers = leverage_tiers_from_account(&risk_params.leverage_tiers)?;
+    let risk_factors = risk_factors_from_account(&risk_params.risk_factors)?;
+    let mut metadata = PerpAssetMetadata::new(
+        symbol.to_ascii_uppercase(),
+        static_params.asset_id as u64,
+        static_params.base_lot_decimals,
+        mark_price_ticks,
+        QuoteLotsPerBaseLotPerTick::new(static_params.tick_size),
+        leverage_tiers,
+        risk_factors,
+        risk_params.cancel_order_risk_factor,
+        u16_checked(risk_params.upnl_risk_factor, "upnl_risk_factor")?,
+        u16_checked(
+            risk_params.upnl_risk_factor_for_withdrawals,
+            "upnl_risk_factor_for_withdrawals",
+        )?,
+    );
+    metadata.cumulative_funding_rate = SignedQuoteLotsPerBaseLot::new(
+        account_metadata.funding_accumulator.cumulative_funding_rate,
+    );
+    Ok(metadata)
+}
+
+fn leverage_tiers_from_account(
+    tiers: &[phoenix_rise::types::accounts::LeverageTier],
+) -> Result<LeverageTiers, crate::error::VulcanError> {
+    if tiers.len() != 4 {
+        return Err(crate::error::VulcanError::api(
+            "PERP_ASSET_MAP_INVALID",
+            format!("Expected 4 leverage tiers, got {}", tiers.len()),
+        ));
+    }
+    let convert = |tier: &phoenix_rise::types::accounts::LeverageTier| -> Result<LeverageTier, crate::error::VulcanError> {
+        Ok(LeverageTier {
+            upper_bound_size: BaseLots::new(tier.upper_bound_size),
+            max_leverage: Constant::new(tier.max_leverage),
+            limit_order_risk_factor: BasisPoints::new(u16_checked(
+                tier.limit_order_risk_factor,
+                "leverage_tier.limit_order_risk_factor",
+            )? as u64),
+        })
+    };
+    LeverageTiers::new([
+        convert(&tiers[0])?,
+        convert(&tiers[1])?,
+        convert(&tiers[2])?,
+        convert(&tiers[3])?,
+    ])
+    .map_err(|e| crate::error::VulcanError::api("PERP_ASSET_MAP_INVALID", e))
+}
+
+fn risk_factors_from_account(risk_factors: &[u16]) -> Result<[u16; 3], crate::error::VulcanError> {
+    if risk_factors.len() < 3 {
+        return Err(crate::error::VulcanError::api(
+            "PERP_ASSET_MAP_INVALID",
+            format!(
+                "Expected at least 3 risk factors, got {}",
+                risk_factors.len()
+            ),
+        ));
+    }
+    Ok([risk_factors[0], risk_factors[1], risk_factors[2]])
+}
+
+fn u16_checked(value: u64, field: &str) -> Result<u16, crate::error::VulcanError> {
+    u16::try_from(value).map_err(|_| {
+        crate::error::VulcanError::api(
+            "PERP_ASSET_MAP_INVALID",
+            format!("{field} does not fit in u16: {value}"),
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use phoenix_rise::types::{AuthoritySet, ExchangeStateSnapshot};
+
+    fn snapshot_fixture(slot: u64) -> ExchangeSnapshotView {
+        ExchangeSnapshotView {
+            version: 1,
+            sequence_number: None,
+            slot,
+            slot_index: 0,
+            exchange: ExchangeStateSnapshot {
+                program_id: "program".to_string(),
+                global_config: "global-config".to_string(),
+                current_authorities: AuthoritySet {
+                    root_authority: "root".to_string(),
+                    risk_authority: "risk".to_string(),
+                    market_authority: "market".to_string(),
+                    oracle_authority: "oracle".to_string(),
+                    adl_authority: "adl".to_string(),
+                    cancel_authority: "cancel".to_string(),
+                    backstop_authority: "backstop".to_string(),
+                },
+                canonical_mint: "canonical".to_string(),
+                usdc_mint: "usdc".to_string(),
+                global_vault: "vault".to_string(),
+                perp_asset_map: "perp-map".to_string(),
+                global_trader_index: vec!["gti-0".to_string()],
+                active_trader_buffer: vec!["atb-0".to_string()],
+                withdraw_queue: "withdraw-queue".to_string(),
+                withdrawals_available: true,
+                exchange_status_bits: 0,
+                exchange_status_features: Vec::new(),
+                active: true,
+                gated: false,
+            },
+            markets: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn exchange_snapshot_cache_round_trips_fresh_snapshot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let snapshot = snapshot_fixture(42);
+
+        store_cached_exchange_snapshot(tmp.path(), "https://api.example", &snapshot).unwrap();
+        let loaded =
+            load_cached_exchange_snapshot(tmp.path(), "https://api.example", false).unwrap();
+
+        assert_eq!(loaded.unwrap().slot, 42);
+    }
+
+    #[test]
+    fn exchange_snapshot_cache_rejects_stale_unless_allowed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let payload = CachedExchangeSnapshot {
+            api_url: "https://api.example".to_string(),
+            fetched_at_unix: 1,
+            snapshot: snapshot_fixture(7),
+        };
+        std::fs::create_dir_all(exchange_cache_dir(tmp.path())).unwrap();
+        std::fs::write(
+            exchange_snapshot_cache_path(tmp.path()),
+            serde_json::to_string(&payload).unwrap(),
+        )
+        .unwrap();
+
+        assert!(
+            load_cached_exchange_snapshot(tmp.path(), "https://api.example", false)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            load_cached_exchange_snapshot(tmp.path(), "https://api.example", true)
+                .unwrap()
+                .unwrap()
+                .slot,
+            7
+        );
+    }
+
+    #[test]
+    fn exchange_snapshot_cache_ignores_invalid_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(exchange_cache_dir(tmp.path())).unwrap();
+        std::fs::write(exchange_snapshot_cache_path(tmp.path()), "not-json").unwrap();
+
+        assert!(
+            load_cached_exchange_snapshot(tmp.path(), "https://api.example", true)
+                .unwrap()
+                .is_none()
+        );
     }
 }

@@ -1358,6 +1358,7 @@ async fn place_live_isolated_level(
         level.stop_loss_price,
         true,
         collateral,
+        None,
         false,
     )
     .await
@@ -3011,6 +3012,7 @@ mod tests {
             source_level_id: None,
         };
         let order = trade::OrderInfo {
+            subaccount_index: None,
             symbol: "ZEC".to_string(),
             side: "Buy".to_string(),
             order_id: "15320".to_string(),

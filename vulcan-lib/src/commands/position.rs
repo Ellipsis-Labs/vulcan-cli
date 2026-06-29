@@ -4,6 +4,8 @@ use crate::cli::position::PositionCommand;
 use crate::context::AppContext;
 use crate::error::VulcanError;
 use crate::output::{render_success, TableRenderable};
+use phoenix_rise::math::{SignedBaseLots, WrapperNum};
+use phoenix_rise::types::{decimal_from_signed_base_lots, Decimal as UiDecimal};
 use phoenix_rise::Side;
 use serde::Serialize;
 use solana_pubkey::Pubkey;
@@ -151,6 +153,8 @@ pub struct CloseResult {
     pub num_instructions: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub swept_subaccount: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sweep_skipped_reason: Option<String>,
 }
 
 impl TableRenderable for CloseResult {
@@ -178,6 +182,9 @@ impl TableRenderable for CloseResult {
                     sub
                 );
             }
+        }
+        if let Some(reason) = &self.sweep_skipped_reason {
+            println!("  Collateral sweep skipped: {}", reason);
         }
         if let Some(sig) = &self.tx_signature {
             println!("  Tx: {}", sig);
@@ -245,18 +252,19 @@ impl TableRenderable for TpSlResult {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/// Fetch all TraderViews for the active wallet.
+/// Fetch all locally computed trader views for the active wallet.
 /// MCP requests use the pre-unlocked session wallet; CLI falls back to default wallet.
-pub(crate) async fn get_all_trader_views(
+pub(crate) async fn get_all_computed_trader_views(
     ctx: &AppContext,
-) -> Result<(Vec<phoenix_rise::types::TraderView>, String), VulcanError> {
-    let (wallet_name, authority) = crate::commands::trade::resolve_authority_name(ctx)?;
-
-    let traders = ctx
-        .http_client
-        .get_traders(&authority)
-        .await
-        .map_err(|e| VulcanError::api("TRADERS_FETCH_FAILED", e.to_string()))?;
+) -> Result<
+    (
+        Vec<crate::commands::trader_state::ComputedTraderView>,
+        String,
+    ),
+    VulcanError,
+> {
+    let (bundle, wallet_name) = get_all_trader_state_bundle(ctx).await?;
+    let traders = bundle.views;
 
     if traders.is_empty() {
         return Err(VulcanError::api(
@@ -268,12 +276,30 @@ pub(crate) async fn get_all_trader_views(
     Ok((traders, wallet_name))
 }
 
-/// Fetch the cross-margin TraderView for the default wallet.
+/// Fetch the full v1 trader-state bundle for the active wallet.
+pub(crate) async fn get_all_trader_state_bundle(
+    ctx: &AppContext,
+) -> Result<(crate::commands::trader_state::TraderStateBundle, String), VulcanError> {
+    let (wallet_name, authority) = crate::commands::trade::resolve_authority_name(ctx)?;
+    let bundle =
+        crate::commands::trader_state::fetch_trader_state_bundle(ctx, &authority, 0).await?;
+
+    if bundle.views.is_empty() {
+        return Err(VulcanError::api(
+            "NO_TRADER_ACCOUNT",
+            "No registered trader account found. Use 'vulcan account register' first.",
+        ));
+    }
+
+    Ok((bundle, wallet_name))
+}
+
+/// Fetch the cross-margin computed trader view for the default wallet.
 #[allow(dead_code)]
 async fn get_trader_view(
     ctx: &AppContext,
-) -> Result<(phoenix_rise::types::TraderView, String), VulcanError> {
-    let (traders, wallet_name) = get_all_trader_views(ctx).await?;
+) -> Result<(crate::commands::trader_state::ComputedTraderView, String), VulcanError> {
+    let (traders, wallet_name) = get_all_computed_trader_views(ctx).await?;
 
     let trader = traders
         .into_iter()
@@ -342,11 +368,13 @@ fn unrealized_pnl_pct(
 // ── Execution ───────────────────────────────────────────────────────────
 
 pub async fn execute_list_inner(ctx: &AppContext) -> Result<PositionListResult, VulcanError> {
-    let (traders, _) = get_all_trader_views(ctx).await?;
-    Ok(project_positions(&traders))
+    let (bundle, _) = get_all_trader_state_bundle(ctx).await?;
+    Ok(project_positions(&bundle.views))
 }
 
-pub(crate) fn project_positions(traders: &[phoenix_rise::types::TraderView]) -> PositionListResult {
+pub(crate) fn project_positions(
+    traders: &[crate::commands::trader_state::ComputedTraderView],
+) -> PositionListResult {
     let mut positions: Vec<PositionInfo> = Vec::new();
     for trader in traders {
         let is_isolated = trader.trader_subaccount_index != 0;
@@ -410,7 +438,8 @@ pub async fn execute_show_inner(
     ctx: &AppContext,
     symbol: &str,
 ) -> Result<PositionDetailResult, VulcanError> {
-    let (traders, _) = get_all_trader_views(ctx).await?;
+    let (bundle, _) = get_all_trader_state_bundle(ctx).await?;
+    let traders = &bundle.views;
 
     let symbol_upper = symbol.to_ascii_uppercase();
     let (trader_view, pos) = traders
@@ -432,12 +461,9 @@ pub async fn execute_show_inner(
     };
 
     let (mut tp_levels, mut sl_levels) = (Vec::new(), Vec::new());
-    let metadata = ctx.metadata().await?;
-    let triggers =
-        crate::commands::conditional_orders::fetch_conditional_triggers(ctx, trader_view, metadata)
-            .await?;
-    for t in triggers
-        .into_iter()
+    for t in trader_view
+        .conditional_triggers
+        .iter()
         .filter(|t| t.symbol.eq_ignore_ascii_case(&pos.symbol))
     {
         let level = TpSlLevel {
@@ -475,28 +501,53 @@ pub async fn execute_close_inner(
     ctx: &AppContext,
     symbol: &str,
 ) -> Result<CloseResult, VulcanError> {
-    let (traders, wallet_name) = get_all_trader_views(ctx).await?;
+    execute_close_target_inner(ctx, symbol, None).await
+}
+
+async fn execute_close_target_inner(
+    ctx: &AppContext,
+    symbol: &str,
+    target_subaccount: Option<u8>,
+) -> Result<CloseResult, VulcanError> {
+    let (wallet_name, authority) = crate::commands::trade::resolve_authority_name(ctx)?;
+    let trader_state =
+        crate::commands::trader_state::fetch_trader_state_snapshot(ctx, &authority, 0).await?;
 
     let symbol_upper = symbol.to_ascii_uppercase();
 
-    // Find the position across all subaccounts
-    let (trader_view, pos) = traders
-        .iter()
-        .find_map(|t| {
-            t.positions
-                .iter()
-                .find(|p| p.symbol.to_ascii_uppercase() == symbol_upper)
-                .map(|p| (t, p))
-        })
-        .ok_or_else(|| {
+    let (subaccount, pos) = if let Some(subaccount_index) = target_subaccount {
+        trader_state
+            .find_position_in_subaccount(subaccount_index, &symbol_upper)
+            .ok_or_else(|| {
+                VulcanError::validation(
+                    "NO_POSITION",
+                    format!(
+                        "No open position for '{}' in subaccount {}",
+                        symbol, subaccount_index
+                    ),
+                )
+            })?
+    } else {
+        trader_state.find_position(&symbol_upper).ok_or_else(|| {
             VulcanError::validation("NO_POSITION", format!("No open position for '{}'", symbol))
-        })?;
+        })?
+    };
 
-    let subaccount_index = trader_view.trader_subaccount_index;
-    let is_long = !pos.position_size.ui.starts_with('-');
+    let subaccount_index = subaccount.subaccount_index;
+    let is_long = pos.is_long();
     let close_side = if is_long { Side::Ask } else { Side::Bid };
-    let abs_size = pos.position_size.value.unsigned_abs();
-    let size_str = pos.position_size.ui.clone();
+    let abs_size = pos.abs_base_lots();
+    let metadata = ctx.metadata().await?;
+    let size_decimal = metadata
+        .get_perp_asset_metadata(&symbol_upper)
+        .map(|asset| {
+            decimal_from_signed_base_lots(
+                SignedBaseLots::new(pos.base_lots()),
+                asset.base_lot_decimals(),
+            )
+        })
+        .unwrap_or_else(|| UiDecimal::from_i64_with_decimals(pos.base_lots(), 0));
+    let size_str = size_decimal.ui;
     let side_closed_str = if is_long { "Long" } else { "Short" }.to_string();
 
     let (wallet, authority, _) =
@@ -521,29 +572,50 @@ pub async fn execute_close_inner(
             .await
             .map_err(|e| VulcanError::api("BUILD_CLOSE_FAILED", e.to_string()))?
     } else {
-        // Isolated: use isolated market order path
-        let trader = crate::commands::trade::trader_from_views(authority, 0, &traders);
+        let trader_pda = phoenix_rise::types::TraderKey::derive_pda(
+            &authority,
+            trader_state.trader_pda_index,
+            subaccount_index,
+        );
+        let ticket = phoenix_rise::MarketOrderTicket::builder()
+            .authority(authority)
+            .trader_account(trader_pda)
+            .symbol(symbol)
+            .side(close_side)
+            .num_base_lots(abs_size)
+            .subaccount_index(subaccount_index)
+            .build()
+            .map_err(|e| VulcanError::api("BUILD_CLOSE_FAILED", e.to_string()))?;
+
         builder
-            .build_isolated_market_order(
-                &trader, symbol, close_side, abs_size,
-                None, // no additional collateral needed for closing
-                true, // allow_cross_and_isolated
-                None, // no bracket
-            )
+            .place_market_order(ticket)
+            .await
             .map_err(|e| VulcanError::api("BUILD_CLOSE_FAILED", e.to_string()))?
     };
 
-    // Auto-sweep: if closing an isolated position, append sweep instruction
-    let swept_subaccount = if subaccount_index > 0 {
-        let child_pda = phoenix_rise::types::TraderKey::derive_pda(&authority, 0, subaccount_index);
-        let parent_pda = phoenix_rise::types::TraderKey::derive_pda(&authority, 0, 0);
-        let sweep_ixs = builder
-            .build_transfer_collateral_child_to_parent(authority, child_pda, parent_pda)
-            .map_err(|e| VulcanError::api("BUILD_SWEEP_FAILED", e.to_string()))?;
-        ixs.extend(sweep_ixs);
-        Some(subaccount_index)
+    // Auto-sweep only when the child has no other position/order-like state.
+    let (swept_subaccount, sweep_skipped_reason) = if subaccount_index > 0 {
+        if let Some(reason) = subaccount.sweep_blocker(Some(&symbol_upper)) {
+            (None, Some(reason))
+        } else {
+            let child_pda = phoenix_rise::types::TraderKey::derive_pda(
+                &authority,
+                trader_state.trader_pda_index,
+                subaccount_index,
+            );
+            let parent_pda = phoenix_rise::types::TraderKey::derive_pda(
+                &authority,
+                trader_state.trader_pda_index,
+                0,
+            );
+            let sweep_ixs = builder
+                .build_transfer_collateral_child_to_parent(authority, child_pda, parent_pda)
+                .map_err(|e| VulcanError::api("BUILD_SWEEP_FAILED", e.to_string()))?;
+            ixs.extend(sweep_ixs);
+            (Some(subaccount_index), None)
+        }
     } else {
-        None
+        (None, None)
     };
 
     let num_ixs = ixs.len();
@@ -557,22 +629,34 @@ pub async fn execute_close_inner(
         tx_signature: sig,
         num_instructions: num_ixs,
         swept_subaccount,
+        sweep_skipped_reason,
     })
 }
 
 pub async fn execute_close_all_inner(ctx: &AppContext) -> Result<CloseAllResult, VulcanError> {
-    let (traders, _wallet_name) = get_all_trader_views(ctx).await?;
+    let (_, authority) = crate::commands::trade::resolve_authority_name(ctx)?;
+    let trader_state =
+        crate::commands::trader_state::fetch_trader_state_snapshot(ctx, &authority, 0).await?;
 
-    let mut symbols: Vec<String> = traders
+    let mut targets: Vec<(u8, String)> = trader_state
+        .snapshot
+        .subaccounts
         .iter()
-        .flat_map(|t| t.positions.iter().map(|p| p.symbol.to_ascii_uppercase()))
+        .flat_map(|subaccount| {
+            subaccount.positions.iter().map(|position| {
+                (
+                    subaccount.subaccount_index,
+                    position.symbol.to_ascii_uppercase(),
+                )
+            })
+        })
         .collect();
-    symbols.sort();
-    symbols.dedup();
+    targets.sort();
+    targets.dedup();
 
-    let mut closed = Vec::with_capacity(symbols.len());
-    for symbol in &symbols {
-        let result = execute_close_inner(ctx, symbol).await?;
+    let mut closed = Vec::with_capacity(targets.len());
+    for (subaccount_index, symbol) in &targets {
+        let result = execute_close_target_inner(ctx, symbol, Some(*subaccount_index)).await?;
         closed.push(result);
     }
 
@@ -589,23 +673,17 @@ pub async fn execute_reduce_inner(
     symbol: &str,
     size: f64,
 ) -> Result<CloseResult, VulcanError> {
-    let (traders, wallet_name) = get_all_trader_views(ctx).await?;
+    let (wallet_name, authority) = crate::commands::trade::resolve_authority_name(ctx)?;
+    let trader_state =
+        crate::commands::trader_state::fetch_trader_state_snapshot(ctx, &authority, 0).await?;
 
     let symbol_upper = symbol.to_ascii_uppercase();
-    let (trader_view, pos) = traders
-        .iter()
-        .find_map(|t| {
-            t.positions
-                .iter()
-                .find(|p| p.symbol.to_ascii_uppercase() == symbol_upper)
-                .map(|p| (t, p))
-        })
-        .ok_or_else(|| {
-            VulcanError::validation("NO_POSITION", format!("No open position for '{}'", symbol))
-        })?;
+    let (subaccount, pos) = trader_state.find_position(&symbol_upper).ok_or_else(|| {
+        VulcanError::validation("NO_POSITION", format!("No open position for '{}'", symbol))
+    })?;
 
-    let subaccount_index = trader_view.trader_subaccount_index;
-    let is_long = !pos.position_size.ui.starts_with('-');
+    let subaccount_index = subaccount.subaccount_index;
+    let is_long = pos.is_long();
     let reduce_side = if is_long { Side::Ask } else { Side::Bid };
     let side_str = if is_long { "Long" } else { "Short" }.to_string();
     let num_base_lots = size as u64;
@@ -630,17 +708,24 @@ pub async fn execute_reduce_inner(
             .await
             .map_err(|e| VulcanError::api("BUILD_REDUCE_FAILED", e.to_string()))?
     } else {
-        let trader = crate::commands::trade::trader_from_views(authority, 0, &traders);
+        let trader_pda = phoenix_rise::types::TraderKey::derive_pda(
+            &authority,
+            trader_state.trader_pda_index,
+            subaccount_index,
+        );
+        let ticket = phoenix_rise::MarketOrderTicket::builder()
+            .authority(authority)
+            .trader_account(trader_pda)
+            .symbol(symbol)
+            .side(reduce_side)
+            .num_base_lots(num_base_lots)
+            .subaccount_index(subaccount_index)
+            .build()
+            .map_err(|e| VulcanError::api("BUILD_REDUCE_FAILED", e.to_string()))?;
+
         builder
-            .build_isolated_market_order(
-                &trader,
-                symbol,
-                reduce_side,
-                num_base_lots,
-                None,
-                true,
-                None,
-            )
+            .place_market_order(ticket)
+            .await
             .map_err(|e| VulcanError::api("BUILD_REDUCE_FAILED", e.to_string()))?
     };
 
@@ -655,6 +740,7 @@ pub async fn execute_reduce_inner(
         tx_signature: sig,
         num_instructions: num_ixs,
         swept_subaccount: None,
+        sweep_skipped_reason: None,
     })
 }
 
@@ -671,23 +757,17 @@ pub async fn execute_tp_sl_inner(
         ));
     }
 
-    let (traders, wallet_name) = get_all_trader_views(ctx).await?;
+    let (wallet_name, authority) = crate::commands::trade::resolve_authority_name(ctx)?;
+    let trader_state =
+        crate::commands::trader_state::fetch_trader_state_snapshot(ctx, &authority, 0).await?;
 
     let symbol_upper = symbol.to_ascii_uppercase();
-    let (trader_view, pos) = traders
-        .iter()
-        .find_map(|t| {
-            t.positions
-                .iter()
-                .find(|p| p.symbol.to_ascii_uppercase() == symbol_upper)
-                .map(|p| (t, p))
-        })
-        .ok_or_else(|| {
-            VulcanError::validation("NO_POSITION", format!("No open position for '{}'", symbol))
-        })?;
+    let (subaccount, pos) = trader_state.find_position(&symbol_upper).ok_or_else(|| {
+        VulcanError::validation("NO_POSITION", format!("No open position for '{}'", symbol))
+    })?;
 
-    let subaccount_index = trader_view.trader_subaccount_index;
-    let is_long = !pos.position_size.ui.starts_with('-');
+    let subaccount_index = subaccount.subaccount_index;
+    let is_long = pos.is_long();
     let primary_side = if is_long { Side::Bid } else { Side::Ask };
 
     let (wallet, authority, _) =
@@ -695,19 +775,15 @@ pub async fn execute_tp_sl_inner(
 
     let trader_pda = phoenix_rise::types::TraderKey::derive_pda(
         &authority,
-        trader_view.trader_pda_index,
+        trader_state.trader_pda_index,
         subaccount_index,
     );
 
     let builder = ctx.tx_builder().await?;
-    let bracket = crate::commands::trade::sized_bracket_leg_orders(
-        tp,
-        sl,
-        pos.position_size.value.unsigned_abs(),
-    )
-    .ok_or_else(|| {
-        VulcanError::validation("NO_TP_SL", "At least one of --tp or --sl must be specified")
-    })?;
+    let bracket = crate::commands::trade::sized_bracket_leg_orders(tp, sl, pos.abs_base_lots())
+        .ok_or_else(|| {
+            VulcanError::validation("NO_TP_SL", "At least one of --tp or --sl must be specified")
+        })?;
 
     let mut ixs = crate::commands::trade::conditional_orders_init_ixs_if_needed(
         ctx, &builder, authority, trader_pda,
