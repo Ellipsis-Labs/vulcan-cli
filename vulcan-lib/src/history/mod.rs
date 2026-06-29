@@ -2,7 +2,7 @@
 
 use crate::context::AppContext;
 use crate::error::VulcanError;
-use phoenix_rise::{
+use phoenix_rise::types::prelude::{
     CollateralHistoryQueryParams, FundingHistoryQueryParams, OrderHistoryQueryParams,
     PnlQueryParams, PnlResolution, TradeHistoryQueryParams,
 };

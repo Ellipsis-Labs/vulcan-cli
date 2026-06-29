@@ -6,7 +6,7 @@ resolver = "2"
 vulcan-lib = { path = "vulcan-lib" }
 
 # Rise SDK
-phoenix-rise = "0.1.14"
+phoenix-rise = "0.3.0"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -23,10 +23,10 @@ toml = "0.8"
 reqwest = { version = "0.12", features = ["json"] }
 
 # Solana
-solana-sdk = "~2.3"
+solana-sdk = "3"
 # Fireblocks is intentionally omitted: some modes can auto-broadcast, while
 # Vulcan expects every signer to return a locally submittable transaction.
-solana-keychain = { version = "1.2", default-features = false, features = [
+solana-keychain = { version = "1.4", default-features = false, features = [
     "memory",
     "vault",
     "privy",
@@ -37,11 +37,13 @@ solana-keychain = { version = "1.2", default-features = false, features = [
     "crossmint",
     "dfns",
     "openfort",
-    "sdk-v2",
+    "sdk-v3",
 ] }
-solana-pubkey = { version = "~2.4", features = ["curve25519"] }
-solana-instruction = { version = "~2.3", default-features = false, features = ["std"] }
-solana-rpc-client = "~2.3"
+solana-pubkey = { version = "3", features = ["curve25519"] }
+solana-instruction = { version = "3", default-features = false, features = ["std"] }
+solana-rpc-client = "3"
+solana-commitment-config = "3"
+solana-compute-budget-interface = "3"
 
 # Encryption
 aes-gcm = "0.10"

@@ -11,9 +11,9 @@ use solana_keychain::{AwsKmsSigner, AwsKmsSignerConfig};
 use solana_keychain::{
     CdpSigner, CdpSignerConfig, CrossmintSigner, CrossmintSignerConfig, DfnsSigner,
     DfnsSignerConfig, GcpKmsSigner, GcpKmsSignerConfig, MemorySigner, OpenfortSigner,
-    OpenfortSignerConfig, ParaSigner, ParaSignerConfig, PrivySigner, PrivySignerConfig,
-    Signer as KeychainSigner, SolanaSigner, TurnkeySigner, TurnkeySignerConfig, VaultSigner,
-    VaultSignerConfig,
+    OpenfortSignerConfig, ParaSigner, ParaSignerConfig, PrivyAuthorizationRequestExpiry,
+    PrivySigner, PrivySignerConfig, Signer as KeychainSigner, SolanaSigner, TurnkeySigner,
+    TurnkeySignerConfig, VaultSigner, VaultSignerConfig,
 };
 use solana_pubkey::Pubkey;
 use std::str::FromStr;
@@ -122,6 +122,8 @@ impl ResolvedSigner {
                     wallet_id,
                     api_base_url,
                     http_client_config: None,
+                    authorization_context: None,
+                    authorization_request_expiry: PrivyAuthorizationRequestExpiry::Default,
                 });
                 signer.init().await.map_err(signer_init_failed)?;
                 KeychainSigner::Privy(signer)
@@ -276,7 +278,7 @@ impl ResolvedSigner {
     }
 
     fn new(wallet_name: String, authority: Pubkey, signer: Option<Arc<DynSigner>>) -> Self {
-        let trader_pda = phoenix_rise::types::TraderKey::new(authority).pda();
+        let trader_pda = phoenix_rise::api::TraderKey::new(authority).pda();
         Self {
             signer,
             wallet_name,

@@ -548,7 +548,7 @@ async fn maybe_register_trader(
     {
         if state.find_subaccount(0).is_some() {
             let trader_key =
-                phoenix_rise::types::TraderKey::new_with_idx(authority, state.trader_pda_index, 0);
+                phoenix_rise::api::TraderKey::new_with_idx(authority, state.trader_pda_index, 0);
             println!("  ✓ Trader account already registered");
             println!("    Trader PDA: {}", trader_key.pda());
             return Ok(());

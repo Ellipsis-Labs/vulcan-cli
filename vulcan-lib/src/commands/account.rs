@@ -255,9 +255,9 @@ pub async fn execute(ctx: &AppContext, cmd: AccountCommand) -> Result<(), Vulcan
             let mut ixs = builder
                 .build_register_trader(authority, pda_index, subaccount_index)
                 .map_err(|e| VulcanError::api("BUILD_REGISTER_FAILED", e.to_string()))?;
-            let parent_pda = phoenix_rise::types::TraderKey::derive_pda(&authority, pda_index, 0);
+            let parent_pda = phoenix_rise::api::TraderKey::derive_pda(&authority, pda_index, 0);
             let child_pda =
-                phoenix_rise::types::TraderKey::derive_pda(&authority, pda_index, subaccount_index);
+                phoenix_rise::api::TraderKey::derive_pda(&authority, pda_index, subaccount_index);
             ixs.extend(
                 builder
                     .build_sync_parent_to_child(authority, parent_pda, child_pda)
@@ -269,7 +269,7 @@ pub async fn execute(ctx: &AppContext, cmd: AccountCommand) -> Result<(), Vulcan
 
             let sig = crate::commands::trade::send_or_dry_run(ctx, ixs, &wallet).await?;
 
-            let trader_key = phoenix_rise::types::TraderKey::new_with_idx(
+            let trader_key = phoenix_rise::api::TraderKey::new_with_idx(
                 authority,
                 pda_index,
                 subaccount_index,
@@ -438,7 +438,7 @@ async fn register_authority(
         }
     };
 
-    let trader_key = phoenix_rise::types::TraderKey::new(authority);
+    let trader_key = phoenix_rise::api::TraderKey::new(authority);
     Ok(RegisterResult {
         authority: authority.to_string(),
         trader_pda: trader_key.pda().to_string(),

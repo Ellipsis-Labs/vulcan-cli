@@ -1,6 +1,6 @@
 [package]
 name = "vulcan-lib"
-version = "0.6.3"
+version = "0.6.4"
 edition = "2021"
 description = "Core library for the Vulcan CLI"
 
@@ -31,6 +31,8 @@ solana-sdk        = { workspace = true }
 solana-keychain   = { workspace = true }
 solana-pubkey     = { workspace = true }
 solana-rpc-client = { workspace = true }
+solana-commitment-config = { workspace = true }
+solana-compute-budget-interface = { workspace = true }
 
 # Encryption
 aes-gcm = { workspace = true }

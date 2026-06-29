@@ -12,13 +12,14 @@ use crate::commands::conditional_orders::{
 use crate::context::AppContext;
 use crate::error::VulcanError;
 use phoenix_rise::math::{
-    PerpAssetMetadata, QuoteLots, Side as RiseSide, SignedBaseLots, SignedQuoteLots, Ticks,
-    TraderPortfolio, WrapperNum,
+    PerpAssetMetadata, QuoteLots, SignedBaseLots, SignedQuoteLots, Ticks, TraderPortfolio,
 };
-use phoenix_rise::types::trader_state::LimitOrder as SdkLimitOrder;
-use phoenix_rise::types::{
-    decimal_from_signed_base_lots, CooldownStatus, Decimal as UiDecimal, MarketStatsUpdate,
-    PhoenixMetadata, Position as SdkPosition, SubaccountState, Trader, TraderKey,
+use phoenix_rise::api::{
+    decimal_from_signed_base_lots, LimitOrder as SdkLimitOrder, PhoenixMetadata,
+    Position as SdkPosition, SubaccountState, Trader, TraderKey,
+};
+use phoenix_rise::types::prelude::{
+    CooldownStatus, Decimal as UiDecimal, MarketStatsUpdate, Side as ApiSide,
     TraderStateCapabilities,
 };
 use serde::{Deserialize, Serialize};
@@ -121,7 +122,7 @@ pub(crate) struct TraderStateMarketOrders {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TraderStateLimitOrderRow {
     pub(crate) order_sequence_number: String,
-    pub(crate) side: RiseSide,
+    pub(crate) side: ApiSide,
     pub(crate) price_ticks: String,
     #[serde(default)]
     pub(crate) price_usd: Option<String>,
@@ -155,7 +156,7 @@ pub(crate) struct TraderStateTriggerRow {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TraderStateTrigger {
     pub(crate) trigger_price_ticks: String,
-    pub(crate) side: RiseSide,
+    pub(crate) side: ApiSide,
     #[serde(default)]
     pub(crate) max_size_lots: Option<String>,
     #[serde(default)]
@@ -343,15 +344,18 @@ impl TraderStatePosition {
     fn to_sdk_position(&self) -> SdkPosition {
         SdkPosition {
             symbol: self.symbol.clone(),
+            position_sequence_number: 0,
             base_position_lots: self.base_lots(),
             entry_price_ticks: parse_i64(&self.entry_price_ticks),
             entry_price_usd: self
                 .entry_price_usd
                 .parse()
-                .unwrap_or(phoenix_rise::Decimal::ZERO),
+                .unwrap_or_default(),
             virtual_quote_position_lots: parse_i64(&self.virtual_quote_position_lots),
             unsettled_funding_quote_lots: parse_i64(&self.unsettled_funding_quote_lots),
             accumulated_funding_quote_lots: parse_i64(&self.accumulated_funding_quote_lots),
+            take_profit_triggers: Vec::new(),
+            stop_loss_triggers: Vec::new(),
         }
     }
 }
@@ -363,12 +367,13 @@ impl TraderStateLimitOrderRow {
             order_sequence_number: parse_u64(&self.order_sequence_number),
             side: format!("{:?}", self.side),
             order_type: String::new(),
+            conditional_kind: None,
             price_ticks: parse_i64(&self.price_ticks),
             price_usd: self
                 .price_usd
                 .as_deref()
                 .and_then(|price| price.parse().ok())
-                .unwrap_or(phoenix_rise::Decimal::ZERO),
+                .unwrap_or_default(),
             size_remaining_lots: parse_u64(&self.size_remaining_lots),
             initial_size_lots: parse_u64(&self.initial_size_lots),
             reduce_only: self.reduce_only,
@@ -949,11 +954,11 @@ fn first_trigger_price_decimal(
 }
 
 fn signed_quote_decimal(value: SignedQuoteLots) -> UiDecimal {
-    value.into()
+    UiDecimal::from_i64_with_decimals(value.as_inner(), 0)
 }
 
 fn quote_decimal(value: QuoteLots) -> UiDecimal {
-    value.into()
+    UiDecimal::from_i64_with_decimals(value.as_inner() as i64, 0)
 }
 
 fn price_decimal_from_str(value: &str) -> UiDecimal {

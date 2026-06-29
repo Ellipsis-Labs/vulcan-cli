@@ -7,7 +7,7 @@ use crate::error::VulcanError;
 use crate::output::{render_success, TableRenderable};
 use crate::wallet::{ResolvedSigner, Wallet};
 use chrono::Utc;
-use phoenix_rise::{PhoenixHttpAuthConfig, PhoenixHttpClientBuilder};
+use phoenix_rise::api::{PhoenixHttpAuthConfig, PhoenixHttpClientBuilder};
 use serde::Serialize;
 use std::io::{self, BufRead, Write};
 

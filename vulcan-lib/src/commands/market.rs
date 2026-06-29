@@ -4,10 +4,8 @@ use crate::cli::market::MarketCommand;
 use crate::context::AppContext;
 use crate::error::VulcanError;
 use crate::output::{render_success, TableRenderable};
-use phoenix_rise::phoenix_rise_types::{
-    candles::{ApiCandle, CandlesQueryParams, Timeframe},
-    http_error::PhoenixHttpError,
-};
+use phoenix_rise::api::PhoenixHttpError;
+use phoenix_rise::types::prelude::{ApiCandle, CandlesQueryParams, Timeframe};
 use serde::{de::DeserializeOwned, Serialize};
 
 // ── Result types ────────────────────────────────────────────────────────
@@ -400,7 +398,7 @@ async fn fetch_api_json<T: DeserializeOwned>(
 pub(crate) async fn fetch_market_stats(
     ctx: &AppContext,
     symbol: &str,
-) -> Result<phoenix_rise::types::MarketView, VulcanError> {
+) -> Result<phoenix_rise::types::prelude::MarketView, VulcanError> {
     let symbol_upper = symbol.to_ascii_uppercase();
     fetch_api_json(
         ctx,
@@ -423,7 +421,7 @@ pub(crate) async fn fetch_market_quote_price(
     })
 }
 
-fn market_quote_price(stats: &phoenix_rise::types::MarketView) -> Option<f64> {
+fn market_quote_price(stats: &phoenix_rise::types::prelude::MarketView) -> Option<f64> {
     stats
         .market
         .l2_orderbook
@@ -432,7 +430,7 @@ fn market_quote_price(stats: &phoenix_rise::types::MarketView) -> Option<f64> {
         .filter(|price| price.is_finite() && *price > 0.0)
 }
 
-fn decimal_to_f64(decimal: &phoenix_rise::types::Decimal) -> f64 {
+fn decimal_to_f64(decimal: &phoenix_rise::types::prelude::Decimal) -> f64 {
     decimal.ui.parse().unwrap_or_else(|_| {
         let scale = 10f64.powi(decimal.decimals as i32);
         decimal.value as f64 / scale
@@ -671,10 +669,10 @@ pub async fn execute_candles_inner(
     interval: &str,
     limit: usize,
 ) -> Result<CandlesResult, VulcanError> {
-    let timeframe: phoenix_rise::Timeframe = interval
+    let timeframe: phoenix_rise::types::prelude::Timeframe = interval
         .parse()
         .map_err(|e: String| VulcanError::validation("INVALID_INTERVAL", e))?;
-    let params = phoenix_rise::CandlesQueryParams::new(symbol, timeframe);
+    let params = phoenix_rise::types::prelude::CandlesQueryParams::new(symbol, timeframe);
     let candles = ctx
         .http_client
         .get_candles(params)

@@ -5,7 +5,7 @@
 
 use crate::context::AppContext;
 use crate::error::VulcanError;
-use phoenix_rise::PhoenixWSClient;
+use phoenix_rise::api::PhoenixWSClient;
 use solana_pubkey::Pubkey;
 
 /// What WS channel to subscribe to for live updates.

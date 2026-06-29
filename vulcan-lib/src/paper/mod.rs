@@ -1383,7 +1383,7 @@ async fn fetch_replay_candles(
     }
     const MAX_LOOKBACK_MS: i64 = 30 * 24 * 60 * 60 * 1000;
     let effective_since = since_ms.max(until_ms - MAX_LOOKBACK_MS);
-    let params = phoenix_rise::CandlesQueryParams::new(symbol, phoenix_rise::Timeframe::Hour1)
+    let params = phoenix_rise::types::prelude::CandlesQueryParams::new(symbol, phoenix_rise::types::prelude::Timeframe::Hour1)
         .with_start_time(effective_since)
         .with_end_time(until_ms);
     let Ok(raw) = ctx.http_client.get_candles(params).await else {

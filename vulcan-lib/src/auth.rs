@@ -2,7 +2,7 @@
 
 use crate::config::VulcanConfig;
 use crate::error::VulcanError;
-use phoenix_rise::{
+use phoenix_rise::api::{
     AuthSession, AuthSessionSnapshot, FileAuthSessionStore, PhoenixHttpAuthConfig,
     PhoenixHttpClient, PhoenixHttpClientBuilder,
 };
@@ -58,7 +58,7 @@ fn build_authenticated_http_client(
 pub fn load_session(vulcan_dir: &Path) -> Result<Option<AuthSession>, VulcanError> {
     let path = session_path(vulcan_dir);
     let store = FileAuthSessionStore::new(path);
-    phoenix_rise::AuthSessionStore::load_session(&store)
+    phoenix_rise::api::AuthSessionStore::load_session(&store)
         .map_err(|e| VulcanError::auth("API_AUTH_SESSION_LOAD_FAILED", e.to_string()))
 }
 

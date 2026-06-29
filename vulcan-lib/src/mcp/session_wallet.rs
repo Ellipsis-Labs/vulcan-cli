@@ -37,7 +37,7 @@ impl SessionWallet {
             .map_err(|e| VulcanError::validation("INVALID_PUBKEY", e.to_string()))?;
         let key_guard = Zeroizing::new(wallet.to_bytes().to_vec());
         let resolved = ResolvedSigner::from_unlocked_wallet_file(wallet_file, wallet)?;
-        let trader_key = phoenix_rise::types::TraderKey::new(authority);
+        let trader_key = phoenix_rise::api::TraderKey::new(authority);
         let trader_pda = trader_key.pda();
 
         Ok(Self {

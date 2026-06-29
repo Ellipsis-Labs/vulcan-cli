@@ -242,8 +242,8 @@ pub async fn execute_transfer_inner(
     let (wallet, authority, _) = crate::commands::trade::resolve_wallet_and_pda(ctx, None).await?;
     let builder = ctx.tx_builder().await?;
 
-    let src_pda = phoenix_rise::types::TraderKey::derive_pda(&authority, 0, from);
-    let dst_pda = phoenix_rise::types::TraderKey::derive_pda(&authority, 0, to);
+    let src_pda = phoenix_rise::api::TraderKey::derive_pda(&authority, 0, from);
+    let dst_pda = phoenix_rise::api::TraderKey::derive_pda(&authority, 0, to);
 
     let ixs = builder
         .build_transfer_collateral(authority, src_pda, dst_pda, amount)
@@ -291,13 +291,13 @@ pub async fn execute_transfer_child_to_parent_inner(
 
     let builder = ctx.tx_builder().await?;
 
-    let child_pda = phoenix_rise::types::TraderKey::derive_pda(
+    let child_pda = phoenix_rise::api::TraderKey::derive_pda(
         &authority,
         trader_state.trader_pda_index,
         child,
     );
     let parent_pda =
-        phoenix_rise::types::TraderKey::derive_pda(&authority, trader_state.trader_pda_index, 0);
+        phoenix_rise::api::TraderKey::derive_pda(&authority, trader_state.trader_pda_index, 0);
 
     let ixs = builder
         .build_transfer_collateral_child_to_parent(authority, child_pda, parent_pda)
@@ -345,8 +345,8 @@ pub async fn execute_sync_parent_to_child_inner(
     let builder = ctx.tx_builder().await?;
 
     let parent_pda =
-        phoenix_rise::types::TraderKey::derive_pda(&authority, trader_state.trader_pda_index, 0);
-    let child_pda = phoenix_rise::types::TraderKey::derive_pda(
+        phoenix_rise::api::TraderKey::derive_pda(&authority, trader_state.trader_pda_index, 0);
+    let child_pda = phoenix_rise::api::TraderKey::derive_pda(
         &authority,
         trader_state.trader_pda_index,
         child,
@@ -392,8 +392,8 @@ pub async fn execute_add_collateral_inner(
     let sub_idx = subaccount.subaccount_index;
     let builder = ctx.tx_builder().await?;
 
-    let src_pda = phoenix_rise::types::TraderKey::derive_pda(&authority, 0, 0);
-    let dst_pda = phoenix_rise::types::TraderKey::derive_pda(&authority, 0, sub_idx);
+    let src_pda = phoenix_rise::api::TraderKey::derive_pda(&authority, 0, 0);
+    let dst_pda = phoenix_rise::api::TraderKey::derive_pda(&authority, 0, sub_idx);
 
     let ixs = builder
         .build_transfer_collateral(authority, src_pda, dst_pda, amount)

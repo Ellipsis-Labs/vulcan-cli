@@ -8,7 +8,7 @@ use crate::paper::PaperSide;
 use crate::strategy::types::{
     StrategyExecution, StrategyMarginMode, StrategyMarketSnapshot, StrategySide,
 };
-use phoenix_rise::Side;
+use phoenix_rise::ix::types::Side;
 
 pub(crate) async fn execute_paper_market(
     ctx: &AppContext,

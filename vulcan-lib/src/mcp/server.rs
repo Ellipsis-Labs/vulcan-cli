@@ -12,7 +12,7 @@ use crate::commands::portfolio::{execute_snapshot_inner, PortfolioSections};
 use crate::context::AppContext;
 use crate::mcp::registry::{self, ToolDef};
 use crate::paper::{PaperOrderType, PaperSide, PaperSizeInput};
-use phoenix_rise::Side;
+use phoenix_rise::ix::types::Side;
 use rmcp::model::*;
 use rmcp::ServerHandler;
 use serde_json::Value;
