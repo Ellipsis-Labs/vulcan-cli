@@ -126,7 +126,7 @@
     },
     "REGISTER_API_FAILED": {
       "category": "api",
-      "recovery": "Check your invite code and API URL. Run 'vulcan status' to verify connectivity"
+      "recovery": "Check your registration code and API URL. Run 'vulcan status' to verify connectivity"
     },
     "TRADERS_FETCH_FAILED": {
       "category": "api",
@@ -134,7 +134,7 @@
     },
     "NO_TRADER_ACCOUNT": {
       "category": "api",
-      "recovery": "Register first with 'vulcan account register --invite-code <CODE>'"
+      "recovery": "Register first with 'vulcan account register --yes'"
     },
     "EXCHANGE_FETCH_FAILED": {
       "category": "api",

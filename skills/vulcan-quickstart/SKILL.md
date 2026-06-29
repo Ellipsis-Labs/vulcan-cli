@@ -71,7 +71,7 @@ For real funds, hand off to `vulcan-onboarding` — it covers wallet creation, a
 
 ```bash
 vulcan wallet create my-wallet                       # creates an encrypted wallet, prompts for password
-vulcan account register --access-code <CODE>         # or --referral-code <CODE>; registers the trader on Phoenix
+vulcan account register                              # or add --referral-code <CODE>; registers the trader on Phoenix
 vulcan margin deposit 50                             # deposit 50 USDC of collateral
 ```
 
@@ -102,7 +102,7 @@ An AI agent should not have access to your main wallet's balance. Create a separ
 ```bash
 vulcan wallet create agent-sandbox              # separate keypair, separate password
 # fund agent-sandbox externally with a little SOL + USDC, then:
-vulcan account register --access-code <CODE> -w agent-sandbox
+vulcan account register -w agent-sandbox
 vulcan margin deposit 50 -w agent-sandbox       # deposit 50 USDC to the sandbox trader
 ```
 

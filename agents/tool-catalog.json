@@ -1121,7 +1121,7 @@
       "name": "vulcan_account_register",
       "command": "vulcan account register",
       "group": "account",
-      "description": "Register a new trader account with an access code or referral code. At least one of access_code, referral_code, or invite_code must be provided.",
+      "description": "Register and onboard a trader account. Omit a code for builder onboarding, pass referral_code for /v1/referral/activate-tx, or pass access_code/invite_code for allowlist activation.",
       "auth_required": true,
       "dangerous": true,
       "parameters": [
@@ -1150,7 +1150,7 @@
           "description": "Must be true to execute"
         }
       ],
-      "example": "vulcan account register --access-code ABC123 --yes -o json"
+      "example": "vulcan account register --yes -o json"
     },
     {
       "name": "vulcan_auth_status",

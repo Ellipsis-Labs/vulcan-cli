@@ -139,8 +139,8 @@ impl VulcanError {
             "NO_DEFAULT_WALLET" => "Run: vulcan wallet set-default <NAME>",
             "WALLET_NOT_FOUND" => "Run 'vulcan wallet list' to see available wallets",
             "DECRYPT_FAILED" => "Wrong password. Check VULCAN_WALLET_PASSWORD env var",
-            "NO_TRADER_ACCOUNT" => "Register first: vulcan account register --invite-code <CODE>",
-            "REGISTER_API_FAILED" => "Check invite code and API URL. Run 'vulcan status' to verify",
+            "NO_TRADER_ACCOUNT" => "Register first: vulcan account register --yes",
+            "REGISTER_API_FAILED" => "Check registration code and API URL. Run 'vulcan status' to verify",
             "TX_SEND_FAILED" => "Check wallet SOL balance and account state",
             "CONFIG_ERROR" | "CONFIG_LOAD_FAILED" | "INIT_FAILED" => {
                 "Run 'vulcan setup' to configure"

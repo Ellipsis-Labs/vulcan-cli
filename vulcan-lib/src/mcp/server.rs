@@ -762,14 +762,17 @@ impl VulcanMcpServer {
                     arg_str_opt(args, "referral_code"),
                     arg_str_opt(args, "invite_code"),
                 ) {
+                    (None, None, None) => None,
                     (Some(code), None, None) | (None, None, Some(code)) => {
-                        commands::account::RegistrationCode::Access(code)
+                        Some(commands::account::RegistrationCode::Access(code))
                     }
-                    (None, Some(code), None) => commands::account::RegistrationCode::Referral(code),
+                    (None, Some(code), None) => {
+                        Some(commands::account::RegistrationCode::Referral(code))
+                    }
                     _ => {
                         return Err(crate::error::VulcanError::validation(
                             "REGISTRATION_CODE_CONFLICT",
-                            "Provide exactly one of access_code, referral_code, or invite_code",
+                            "Provide at most one of access_code, referral_code, or invite_code",
                         ));
                     }
                 };
