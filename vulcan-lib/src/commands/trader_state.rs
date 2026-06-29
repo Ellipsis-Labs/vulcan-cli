@@ -11,12 +11,12 @@ use crate::commands::conditional_orders::{
 };
 use crate::context::AppContext;
 use crate::error::VulcanError;
-use phoenix_rise::math::{
-    PerpAssetMetadata, QuoteLots, SignedBaseLots, SignedQuoteLots, Ticks, TraderPortfolio,
-};
 use phoenix_rise::api::{
     decimal_from_signed_base_lots, LimitOrder as SdkLimitOrder, PhoenixMetadata,
     Position as SdkPosition, SubaccountState, Trader, TraderKey,
+};
+use phoenix_rise::math::{
+    PerpAssetMetadata, QuoteLots, SignedBaseLots, SignedQuoteLots, Ticks, TraderPortfolio,
 };
 use phoenix_rise::types::prelude::{
     CooldownStatus, Decimal as UiDecimal, MarketStatsUpdate, Side as ApiSide,
@@ -347,10 +347,7 @@ impl TraderStatePosition {
             position_sequence_number: 0,
             base_position_lots: self.base_lots(),
             entry_price_ticks: parse_i64(&self.entry_price_ticks),
-            entry_price_usd: self
-                .entry_price_usd
-                .parse()
-                .unwrap_or_default(),
+            entry_price_usd: self.entry_price_usd.parse().unwrap_or_default(),
             virtual_quote_position_lots: parse_i64(&self.virtual_quote_position_lots),
             unsettled_funding_quote_lots: parse_i64(&self.unsettled_funding_quote_lots),
             accumulated_funding_quote_lots: parse_i64(&self.accumulated_funding_quote_lots),

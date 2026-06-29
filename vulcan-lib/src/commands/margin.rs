@@ -291,11 +291,8 @@ pub async fn execute_transfer_child_to_parent_inner(
 
     let builder = ctx.tx_builder().await?;
 
-    let child_pda = phoenix_rise::api::TraderKey::derive_pda(
-        &authority,
-        trader_state.trader_pda_index,
-        child,
-    );
+    let child_pda =
+        phoenix_rise::api::TraderKey::derive_pda(&authority, trader_state.trader_pda_index, child);
     let parent_pda =
         phoenix_rise::api::TraderKey::derive_pda(&authority, trader_state.trader_pda_index, 0);
 
@@ -346,11 +343,8 @@ pub async fn execute_sync_parent_to_child_inner(
 
     let parent_pda =
         phoenix_rise::api::TraderKey::derive_pda(&authority, trader_state.trader_pda_index, 0);
-    let child_pda = phoenix_rise::api::TraderKey::derive_pda(
-        &authority,
-        trader_state.trader_pda_index,
-        child,
-    );
+    let child_pda =
+        phoenix_rise::api::TraderKey::derive_pda(&authority, trader_state.trader_pda_index, child);
 
     let ixs = builder
         .build_sync_parent_to_child(authority, parent_pda, child_pda)

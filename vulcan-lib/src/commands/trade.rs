@@ -565,8 +565,9 @@ pub(crate) async fn conditional_orders_init_ixs_if_needed(
     authority: Pubkey,
     trader_pda: Pubkey,
 ) -> Result<Vec<solana_sdk::instruction::Instruction>, VulcanError> {
-    let conditional_orders = phoenix_rise::ix::constants::get_conditional_orders_address(&trader_pda)
-        .map_err(|e| VulcanError::api("CONDITIONAL_ORDERS_PDA_FAILED", e.to_string()))?;
+    let conditional_orders =
+        phoenix_rise::ix::constants::get_conditional_orders_address(&trader_pda)
+            .map_err(|e| VulcanError::api("CONDITIONAL_ORDERS_PDA_FAILED", e.to_string()))?;
     let rpc_client = ctx.rpc_client_async();
     let response = rpc_client
         .get_account_with_commitment(&conditional_orders, rpc_client.commitment())
@@ -1083,8 +1084,9 @@ pub async fn execute_market_order_inner(
 
         if let Some(bracket) = bracket {
             let rpc_client = Arc::new(ctx.rpc_client_async());
-            ticket_builder = ticket_builder
-                .bracket_leg_ticket(phoenix_rise::core::BracketLegTicket::new(rpc_client, bracket));
+            ticket_builder = ticket_builder.bracket_leg_ticket(
+                phoenix_rise::core::BracketLegTicket::new(rpc_client, bracket),
+            );
         }
 
         let ticket = ticket_builder
@@ -1256,8 +1258,9 @@ pub async fn execute_limit_order_inner(
 
             if let Some(bracket) = bracket {
                 let rpc_client = Arc::new(ctx.rpc_client_async());
-                ticket_builder = ticket_builder
-                    .bracket_leg_ticket(phoenix_rise::core::BracketLegTicket::new(rpc_client, bracket));
+                ticket_builder = ticket_builder.bracket_leg_ticket(
+                    phoenix_rise::core::BracketLegTicket::new(rpc_client, bracket),
+                );
             }
 
             let ticket = ticket_builder
@@ -1342,8 +1345,9 @@ pub async fn execute_limit_order_inner(
 
         if let Some(bracket) = bracket {
             let rpc_client = Arc::new(ctx.rpc_client_async());
-            ticket_builder = ticket_builder
-                .bracket_leg_ticket(phoenix_rise::core::BracketLegTicket::new(rpc_client, bracket));
+            ticket_builder = ticket_builder.bracket_leg_ticket(
+                phoenix_rise::core::BracketLegTicket::new(rpc_client, bracket),
+            );
         }
 
         let ticket = ticket_builder
@@ -1594,7 +1598,8 @@ async fn api_limit_order_cancel_selection(
         }
     }
 
-    let mut cancel_ids_by_subaccount: BTreeMap<u8, Vec<phoenix_rise::ix::types::CancelId>> = BTreeMap::new();
+    let mut cancel_ids_by_subaccount: BTreeMap<u8, Vec<phoenix_rise::ix::types::CancelId>> =
+        BTreeMap::new();
     for order in &selected {
         cancel_ids_by_subaccount
             .entry(order.subaccount_index)
@@ -2473,10 +2478,7 @@ mod conditional_orders_init_tests {
     }
 
     fn phoenix_ix(discriminant: [u8; 8]) -> solana_sdk::instruction::Instruction {
-        test_ix(
-            *phoenix_rise::ix::PHOENIX_PROGRAM_ID,
-            discriminant.to_vec(),
-        )
+        test_ix(*phoenix_rise::ix::PHOENIX_PROGRAM_ID, discriminant.to_vec())
     }
 
     #[test]

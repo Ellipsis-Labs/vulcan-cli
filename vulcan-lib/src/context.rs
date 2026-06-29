@@ -6,16 +6,16 @@ use crate::mcp::session_wallet::SessionWallet;
 use crate::output::OutputFormat;
 use crate::wallet::WalletStore;
 use anyhow::Result;
-use phoenix_rise::math::{
-    BaseLots, BasisPoints, Constant, LeverageTier, LeverageTiers, PerpAssetMetadata,
-    QuoteLotsPerBaseLotPerTick, SignedQuoteLotsPerBaseLot, Ticks,
-};
 use phoenix_rise::accounts::perp_asset_map::{
     LeverageTier as AccountLeverageTier, PerpAssetMap,
     PerpAssetMetadata as AccountPerpAssetMetadata,
 };
 use phoenix_rise::api::{PhoenixHttpClient, PhoenixMetadata};
 use phoenix_rise::core::PhoenixTxBuilder;
+use phoenix_rise::math::{
+    BaseLots, BasisPoints, Constant, LeverageTier, LeverageTiers, PerpAssetMetadata,
+    QuoteLotsPerBaseLotPerTick, SignedQuoteLotsPerBaseLot, Ticks,
+};
 use phoenix_rise::types::prelude::ExchangeSnapshotView;
 use serde::{Deserialize, Serialize};
 use solana_commitment_config::CommitmentConfig;
@@ -379,8 +379,9 @@ fn perp_asset_metadata_from_account(
 ) -> Result<PerpAssetMetadata, crate::error::VulcanError> {
     let static_params = account_metadata.static_market_params();
     let risk_params = account_metadata.risk_params();
-    let mark_price_ticks = Ticks::new_checked(account_metadata.oracle_price().mark_price.price.ticks)
-        .map_err(|e| crate::error::VulcanError::api("PERP_ASSET_MAP_INVALID", e.to_string()))?;
+    let mark_price_ticks =
+        Ticks::new_checked(account_metadata.oracle_price().mark_price.price.ticks)
+            .map_err(|e| crate::error::VulcanError::api("PERP_ASSET_MAP_INVALID", e.to_string()))?;
     let leverage_tiers = leverage_tiers_from_account(&risk_params.leverage_tiers)?;
     let risk_factors = risk_factors_from_account(&risk_params.risk_factors)?;
     let mut metadata = PerpAssetMetadata::new(
@@ -399,7 +400,9 @@ fn perp_asset_metadata_from_account(
         )?,
     );
     metadata.cumulative_funding_rate = SignedQuoteLotsPerBaseLot::new(
-        account_metadata.funding_accumulator().cumulative_funding_rate,
+        account_metadata
+            .funding_accumulator()
+            .cumulative_funding_rate,
     );
     Ok(metadata)
 }

@@ -269,11 +269,8 @@ pub async fn execute(ctx: &AppContext, cmd: AccountCommand) -> Result<(), Vulcan
 
             let sig = crate::commands::trade::send_or_dry_run(ctx, ixs, &wallet).await?;
 
-            let trader_key = phoenix_rise::api::TraderKey::new_with_idx(
-                authority,
-                pda_index,
-                subaccount_index,
-            );
+            let trader_key =
+                phoenix_rise::api::TraderKey::new_with_idx(authority, pda_index, subaccount_index);
             let result = RegisterResult {
                 authority: authority.to_string(),
                 trader_pda: trader_key.pda().to_string(),

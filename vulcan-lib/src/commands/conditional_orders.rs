@@ -10,11 +10,11 @@ use crate::commands::trader_state::{
 use crate::context::AppContext;
 use crate::error::VulcanError;
 use phoenix_rise::accounts::owned::{ConditionalOrderCollection, StopLossTradeSide};
+use phoenix_rise::api::PhoenixMetadata;
 use phoenix_rise::ix::constants::get_conditional_orders_address;
 use phoenix_rise::math::{BaseLots, Side as RiseSide, Ticks};
-use phoenix_rise::api::PhoenixMetadata;
-use solana_pubkey::Pubkey;
 use solana_commitment_config::CommitmentConfig;
+use solana_pubkey::Pubkey;
 use std::collections::{HashMap, HashSet};
 
 /// Fetch and decode the on-chain `ConditionalOrderCollection` for one trader.
