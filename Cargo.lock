@@ -6964,6 +6964,7 @@ dependencies = [
  "solana-keychain",
  "solana-pubkey 3.0.0",
  "solana-rpc-client",
+ "solana-rpc-client-api",
  "solana-sdk",
  "tempfile",
  "thiserror 2.0.18",

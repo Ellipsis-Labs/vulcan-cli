@@ -42,6 +42,7 @@ solana-keychain = { version = "1.4", default-features = false, features = [
 solana-pubkey = { version = "3", features = ["curve25519"] }
 solana-instruction = { version = "3", default-features = false, features = ["std"] }
 solana-rpc-client = "3"
+solana-rpc-client-api = "3"
 solana-commitment-config = "3"
 solana-compute-budget-interface = "3"
 

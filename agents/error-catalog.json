@@ -164,6 +164,14 @@
       "category": "api",
       "recovery": "Failed to build registration transaction. Account may already be registered"
     },
+    "INSUFFICIENT_SOL_FOR_REGISTRATION": {
+      "category": "validation",
+      "recovery": "Fund the wallet with enough SOL for cross-margin trader account rent, then retry registration"
+    },
+    "REGISTRATION_SIMULATION_FAILED": {
+      "category": "tx_failed",
+      "recovery": "Check the simulation logs, payer SOL balance, and account state before retrying registration"
+    },
     "BUILD_DEPOSIT_FAILED": {
       "category": "api",
       "recovery": "Failed to build deposit transaction. Check USDC balance with 'vulcan wallet balance'"
@@ -231,6 +239,14 @@
     "RPC_BALANCE_FAILED": {
       "category": "network",
       "recovery": "Cannot fetch balance from RPC. Check rpc_url in config"
+    },
+    "REGISTRATION_RENT_FETCH_FAILED": {
+      "category": "network",
+      "recovery": "Cannot fetch registration rent exemption from RPC. Check rpc_url in config"
+    },
+    "REGISTRATION_SIMULATION_RPC_FAILED": {
+      "category": "network",
+      "recovery": "Cannot simulate registration transaction through RPC. Check rpc_url in config"
     },
     "TX_SEND_FAILED": {
       "category": "tx_failed",

@@ -18,9 +18,14 @@ use phoenix_rise::ix::register_trader::{create_register_trader_ix, RegisterTrade
 use serde::Serialize;
 use solana_keychain::SignTransactionResult;
 use solana_pubkey::Pubkey;
+use solana_rpc_client_api::config::RpcSimulateTransactionConfig;
 use std::str::FromStr;
 
 const CROSS_MARGIN_MAX_POSITIONS: u32 = 128;
+const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
+const TRADER_HEADER_LEN: usize = 224;
+const TRADER_POSITION_MAP_PREFIX_LEN: usize = 16;
+const TRADER_POSITION_ENTRY_LEN: usize = 40;
 
 // ── Result types ────────────────────────────────────────────────────────
 
@@ -64,6 +69,118 @@ fn parse_registration_code(
             "Provide at most one of --access-code, --referral-code, or --invite-code",
         )),
     }
+}
+
+fn trader_account_size(max_positions: u32) -> Result<usize, VulcanError> {
+    let position_entries_len = TRADER_POSITION_ENTRY_LEN
+        .checked_mul(max_positions as usize)
+        .ok_or_else(|| {
+            VulcanError::validation(
+                "TRADER_ACCOUNT_SIZE_OVERFLOW",
+                "Trader account position map size overflowed",
+            )
+        })?;
+    TRADER_HEADER_LEN
+        .checked_add(TRADER_POSITION_MAP_PREFIX_LEN)
+        .and_then(|prefix_len| prefix_len.checked_add(position_entries_len))
+        .ok_or_else(|| {
+            VulcanError::validation(
+                "TRADER_ACCOUNT_SIZE_OVERFLOW",
+                "Trader account size overflowed",
+            )
+        })
+}
+
+fn format_sol_lamports(lamports: u64) -> String {
+    let whole = lamports / LAMPORTS_PER_SOL;
+    let fractional = lamports % LAMPORTS_PER_SOL;
+    let mut value = format!("{whole}.{fractional:09}");
+    while value.contains('.') && value.ends_with('0') {
+        value.pop();
+    }
+    if value.ends_with('.') {
+        value.push('0');
+    }
+    value
+}
+
+async fn ensure_sol_for_cross_trader_rent(
+    ctx: &AppContext,
+    payer: Pubkey,
+    max_positions: u32,
+) -> Result<(), VulcanError> {
+    let account_size = trader_account_size(max_positions)?;
+    let rpc = ctx.rpc_client_async();
+    let required_lamports = rpc
+        .get_minimum_balance_for_rent_exemption(account_size)
+        .await
+        .map_err(|e| VulcanError::network("REGISTRATION_RENT_FETCH_FAILED", e.to_string()))?;
+    let balance_lamports = rpc
+        .get_balance(&payer)
+        .await
+        .map_err(|e| VulcanError::network("RPC_BALANCE_FAILED", e.to_string()))?;
+
+    if balance_lamports < required_lamports {
+        return Err(VulcanError::validation(
+            "INSUFFICIENT_SOL_FOR_REGISTRATION",
+            format!(
+                "Wallet {payer} has {} SOL, but registering the cross-margin trader account needs at least {} SOL for rent exemption ({} bytes). Fund the wallet with SOL and retry.",
+                format_sol_lamports(balance_lamports),
+                format_sol_lamports(required_lamports),
+                account_size,
+            ),
+        ));
+    }
+
+    Ok(())
+}
+
+async fn simulate_onboarding_transaction(
+    ctx: &AppContext,
+    ixs: &[solana_sdk::instruction::Instruction],
+    fee_payer: Pubkey,
+) -> Result<(), VulcanError> {
+    let tx = solana_sdk::transaction::Transaction::new_with_payer(ixs, Some(&fee_payer));
+    let result = ctx
+        .rpc_client_async()
+        .simulate_transaction_with_config(
+            &tx,
+            RpcSimulateTransactionConfig {
+                sig_verify: false,
+                replace_recent_blockhash: true,
+                commitment: Some(solana_commitment_config::CommitmentConfig::confirmed()),
+                ..RpcSimulateTransactionConfig::default()
+            },
+        )
+        .await
+        .map_err(|e| VulcanError::network("REGISTRATION_SIMULATION_RPC_FAILED", e.to_string()))?;
+
+    if let Some(err) = result.value.err {
+        let logs = result
+            .value
+            .logs
+            .unwrap_or_default()
+            .into_iter()
+            .rev()
+            .take(8)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>();
+        let logs = if logs.is_empty() {
+            String::new()
+        } else {
+            format!(" Logs: {}", logs.join(" | "))
+        };
+        return Err(VulcanError::tx_failed(
+            "REGISTRATION_SIMULATION_FAILED",
+            format!(
+                "Registration transaction simulation failed for payer {fee_payer}: {err:?}.{logs}"
+            ),
+        ));
+    }
+
+    Ok(())
 }
 
 impl TableRenderable for RegisterResult {
@@ -415,6 +532,8 @@ async fn submit_local_register_tx(
     wallet_name: &str,
     authority: Pubkey,
 ) -> Result<Option<String>, VulcanError> {
+    ensure_sol_for_cross_trader_rent(ctx, authority, CROSS_MARGIN_MAX_POSITIONS).await?;
+
     let builder = ctx.tx_builder().await?;
     let ixs = builder
         .build_register_trader(authority, 0, 0)
@@ -422,6 +541,24 @@ async fn submit_local_register_tx(
 
     let (wallet, _, _) =
         crate::commands::trade::resolve_wallet_and_pda(ctx, Some(wallet_name)).await?;
+    let fee_payer = wallet.signer()?.pubkey();
+    if fee_payer != wallet.authority {
+        return Err(VulcanError::auth(
+            "SIGNER_PUBKEY_MISMATCH",
+            format!(
+                "Signer pubkey {} does not match active wallet authority {}",
+                fee_payer, wallet.authority
+            ),
+        ));
+    }
+    let mut simulation_ixs = Vec::with_capacity(ixs.len() + 1);
+    simulation_ixs.push(
+        solana_compute_budget_interface::ComputeBudgetInstruction::set_compute_unit_limit(
+            crate::commands::trade::DEFAULT_CU_LIMIT,
+        ),
+    );
+    simulation_ixs.extend(ixs.iter().cloned());
+    simulate_onboarding_transaction(ctx, &simulation_ixs, fee_payer).await?;
 
     match crate::commands::trade::send_or_dry_run(ctx, ixs, &wallet).await {
         Ok(sig) => Ok(sig),
@@ -483,6 +620,8 @@ async fn sign_onboarding_transaction_for_api(
         ));
     }
 
+    simulate_onboarding_transaction(ctx, &ixs, fee_payer).await?;
+
     let recent_blockhash = ctx
         .rpc_client()
         .get_latest_blockhash()
@@ -509,6 +648,7 @@ async fn submit_builder_onboarding_tx(
     ctx: &AppContext,
     wallet_name: &str,
     authority: Pubkey,
+    status: ReferralActivationTraderStatus,
 ) -> Result<Option<String>, VulcanError> {
     let (wallet, _, _) =
         crate::commands::trade::resolve_wallet_and_pda(ctx, Some(wallet_name)).await?;
@@ -522,6 +662,9 @@ async fn submit_builder_onboarding_tx(
             ),
         ));
     }
+    if status.should_include_register_trader() {
+        ensure_sol_for_cross_trader_rent(ctx, fee_payer, CROSS_MARGIN_MAX_POSITIONS).await?;
+    }
     let built = ctx
         .http_client
         .exchange()
@@ -532,6 +675,9 @@ async fn submit_builder_onboarding_tx(
         })
         .await
         .map_err(|e| VulcanError::api("BUILD_REGISTER_API_FAILED", e.to_string()))?;
+    if built.include_register_trader && built.max_positions != CROSS_MARGIN_MAX_POSITIONS {
+        ensure_sol_for_cross_trader_rent(ctx, fee_payer, built.max_positions).await?;
+    }
     let ixs = built
         .instructions
         .iter()
@@ -664,6 +810,8 @@ async fn submit_referral_activation_tx(
 
     let mut ixs = Vec::<solana_sdk::instruction::Instruction>::new();
     if status.should_include_register_trader() {
+        ensure_sol_for_cross_trader_rent(ctx, authority, CROSS_MARGIN_MAX_POSITIONS).await?;
+
         let register_params = RegisterTraderParams::builder()
             .payer(authority)
             .trader(authority)
@@ -744,7 +892,7 @@ async fn register_authority(
                 submit_referral_activation_tx(ctx, wallet_name, authority, referral_code, status)
                     .await?
             }
-            None => submit_builder_onboarding_tx(ctx, wallet_name, authority).await?,
+            None => submit_builder_onboarding_tx(ctx, wallet_name, authority, status).await?,
         }
     };
 
@@ -755,4 +903,26 @@ async fn register_authority(
         dry_run: ctx.dry_run,
         tx_signature: sig,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trader_account_size_matches_rise_layout() {
+        assert_eq!(
+            trader_account_size(CROSS_MARGIN_MAX_POSITIONS).expect("cross account size"),
+            5_360
+        );
+        assert_eq!(trader_account_size(1).expect("isolated account size"), 280);
+    }
+
+    #[test]
+    fn format_sol_lamports_trims_fractional_padding() {
+        assert_eq!(format_sol_lamports(0), "0.0");
+        assert_eq!(format_sol_lamports(1), "0.000000001");
+        assert_eq!(format_sol_lamports(1_500_000_000), "1.5");
+        assert_eq!(format_sol_lamports(2_000_000_000), "2.0");
+    }
 }

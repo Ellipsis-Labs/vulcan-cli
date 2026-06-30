@@ -140,6 +140,12 @@ impl VulcanError {
             "WALLET_NOT_FOUND" => "Run 'vulcan wallet list' to see available wallets",
             "DECRYPT_FAILED" => "Wrong password. Check VULCAN_WALLET_PASSWORD env var",
             "NO_TRADER_ACCOUNT" => "Register first: vulcan account register --yes",
+            "INSUFFICIENT_SOL_FOR_REGISTRATION" => {
+                "Fund the wallet with SOL for cross-margin trader account rent, then retry registration"
+            }
+            "REGISTRATION_SIMULATION_FAILED" => {
+                "Check the simulation logs, payer SOL balance, and account state before retrying registration"
+            }
             "REGISTER_API_FAILED" => "Check registration code and API URL. Run 'vulcan status' to verify",
             "TX_SEND_FAILED" => "Check wallet SOL balance and account state",
             "CONFIG_ERROR" | "CONFIG_LOAD_FAILED" | "INIT_FAILED" => {
@@ -149,7 +155,10 @@ impl VulcanError {
             "UNKNOWN_MARKET" => "Run 'vulcan market list' to see available markets",
             "MISSING_ARG" => "Check tool schema for required fields",
             "UNKNOWN_TOOL" => "Run MCP tools/list to see available tools",
-            "BLOCKHASH_FAILED" | "RPC_BALANCE_FAILED" => "Check rpc_url in config",
+            "BLOCKHASH_FAILED"
+            | "RPC_BALANCE_FAILED"
+            | "REGISTRATION_RENT_FETCH_FAILED"
+            | "REGISTRATION_SIMULATION_RPC_FAILED" => "Check rpc_url in config",
             "EXCHANGE_FETCH_FAILED" | "TRADERS_FETCH_FAILED" | "MARKETS_FETCH_FAILED" => {
                 "Run 'vulcan status' to check API connectivity"
             }
