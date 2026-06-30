@@ -991,9 +991,9 @@ fn health_next_steps(
     } else if wallets.default_wallet.is_none() {
         steps.push("Set a default wallet: vulcan wallet set-default <NAME>".to_string());
     }
-    if live_readiness.invite_code_required {
-        steps.push("Register the trader account: vulcan account register --yes (or add --referral-code <CODE> when applicable).".to_string());
-    } else if live_readiness.has_default_wallet && !status.trader.registered {
+    if live_readiness.invite_code_required
+        || (live_readiness.has_default_wallet && !status.trader.registered)
+    {
         steps.push("Register the trader account: vulcan account register --yes (or add --referral-code <CODE> when applicable).".to_string());
     }
     if status.trader.registered {
