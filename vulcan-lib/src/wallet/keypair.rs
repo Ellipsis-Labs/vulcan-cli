@@ -98,10 +98,13 @@ impl Wallet {
     }
 
     /// Get a Solana SDK Keypair from this wallet
-    #[allow(deprecated)]
     pub fn to_solana_keypair(&self) -> Result<solana_sdk::signature::Keypair> {
-        let encoded = bs58::encode(&self.keypair_bytes).into_string();
-        solana_sdk::signature::Keypair::try_from_base58_string(&encoded)
+        let keypair_bytes: [u8; 64] = self
+            .keypair_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow!("Invalid keypair length: expected 64 bytes"))?;
+        solana_sdk::signature::Keypair::try_from(&keypair_bytes[..])
             .map_err(|e| anyhow!("Failed to create Solana keypair: {}", e))
     }
 

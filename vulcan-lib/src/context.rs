@@ -12,10 +12,7 @@ use phoenix_rise::accounts::perp_asset_map::{
 };
 use phoenix_rise::api::{PhoenixHttpClient, PhoenixMetadata};
 use phoenix_rise::core::PhoenixTxBuilder;
-use phoenix_rise::math::{
-    BaseLots, BasisPoints, Constant, LeverageTier, LeverageTiers, PerpAssetMetadata,
-    QuoteLotsPerBaseLotPerTick, SignedQuoteLotsPerBaseLot, Ticks,
-};
+use phoenix_rise::math::{BasisPoints, LeverageTier, LeverageTiers, PerpAssetMetadata};
 use phoenix_rise::types::prelude::ExchangeSnapshotView;
 use serde::{Deserialize, Serialize};
 use solana_commitment_config::CommitmentConfig;
@@ -379,9 +376,7 @@ fn perp_asset_metadata_from_account(
 ) -> Result<PerpAssetMetadata, crate::error::VulcanError> {
     let static_params = account_metadata.static_market_params();
     let risk_params = account_metadata.risk_params();
-    let mark_price_ticks =
-        Ticks::new_checked(account_metadata.oracle_price().mark_price.price.ticks)
-            .map_err(|e| crate::error::VulcanError::api("PERP_ASSET_MAP_INVALID", e.to_string()))?;
+    let mark_price_ticks = account_metadata.oracle_price().mark_price.price.ticks;
     let leverage_tiers = leverage_tiers_from_account(&risk_params.leverage_tiers)?;
     let risk_factors = risk_factors_from_account(&risk_params.risk_factors)?;
     let mut metadata = PerpAssetMetadata::new(
@@ -389,21 +384,19 @@ fn perp_asset_metadata_from_account(
         static_params.asset_id() as u64,
         static_params.base_lot_decimals,
         mark_price_ticks,
-        QuoteLotsPerBaseLotPerTick::new(static_params.tick_size),
+        static_params.tick_size,
         leverage_tiers,
         risk_factors,
         risk_params.cancel_order_risk_factor,
-        u16_checked(risk_params.upnl_risk_factor, "upnl_risk_factor")?,
+        u16_checked(risk_params.upnl_risk_factor.into(), "upnl_risk_factor")?,
         u16_checked(
-            risk_params.upnl_risk_factor_for_withdrawals,
+            risk_params.upnl_risk_factor_for_withdrawals.into(),
             "upnl_risk_factor_for_withdrawals",
         )?,
     );
-    metadata.cumulative_funding_rate = SignedQuoteLotsPerBaseLot::new(
-        account_metadata
-            .funding_accumulator()
-            .cumulative_funding_rate,
-    );
+    metadata.cumulative_funding_rate = account_metadata
+        .funding_accumulator()
+        .cumulative_funding_rate;
     Ok(metadata)
 }
 
@@ -418,10 +411,10 @@ fn leverage_tiers_from_account(
     }
     let convert = |tier: &AccountLeverageTier| -> Result<LeverageTier, crate::error::VulcanError> {
         Ok(LeverageTier {
-            upper_bound_size: BaseLots::new(tier.upper_bound_size),
-            max_leverage: Constant::new(tier.max_leverage),
+            upper_bound_size: tier.upper_bound_size,
+            max_leverage: tier.max_leverage,
             limit_order_risk_factor: BasisPoints::new(u16_checked(
-                tier.limit_order_risk_factor,
+                tier.limit_order_risk_factor.into(),
                 "leverage_tier.limit_order_risk_factor",
             )? as u64),
         })
