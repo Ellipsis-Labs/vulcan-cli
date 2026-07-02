@@ -6,14 +6,16 @@ use crate::mcp::session_wallet::SessionWallet;
 use crate::output::OutputFormat;
 use crate::wallet::WalletStore;
 use anyhow::Result;
-use phoenix_rise::math::{
-    BaseLots, BasisPoints, Constant, LeverageTier, LeverageTiers, PerpAssetMetadata,
-    QuoteLotsPerBaseLotPerTick, SignedQuoteLotsPerBaseLot, Ticks, WrapperNum,
+use phoenix_rise::accounts::perp_asset_map::{
+    LeverageTier as AccountLeverageTier, PerpAssetMap,
+    PerpAssetMetadata as AccountPerpAssetMetadata,
 };
-use phoenix_rise::types::accounts::{PerpAssetMap, PerpAssetMetadata as AccountPerpAssetMetadata};
-use phoenix_rise::types::{ExchangeSnapshotView, PhoenixMetadata};
-use phoenix_rise::{PhoenixHttpClient, PhoenixTxBuilder};
+use phoenix_rise::api::{PhoenixHttpClient, PhoenixMetadata};
+use phoenix_rise::core::PhoenixTxBuilder;
+use phoenix_rise::math::{BasisPoints, LeverageTier, LeverageTiers, PerpAssetMetadata};
+use phoenix_rise::types::prelude::ExchangeSnapshotView;
 use serde::{Deserialize, Serialize};
+use solana_commitment_config::CommitmentConfig;
 use solana_pubkey::Pubkey;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -171,7 +173,7 @@ impl AppContext {
         self.metadata
             .get_or_try_init(|| async {
                 let exchange = self.exchange_snapshot().await?;
-                let view: phoenix_rise::types::ExchangeView =
+                let view: phoenix_rise::api::ExchangeView =
                     exchange.into_exchange_response().into();
                 Ok(PhoenixMetadata::new(view))
             })
@@ -236,8 +238,15 @@ impl AppContext {
             crate::error::VulcanError::api("PERP_ASSET_MAP_DECODE_FAILED", e.to_string())
         })?;
 
-        for (symbol, account_metadata) in perp_asset_map.iter() {
-            let perp_metadata = perp_asset_metadata_from_account(symbol, account_metadata)?;
+        for entry in perp_asset_map.iter() {
+            let entry = entry.map_err(|e| {
+                crate::error::VulcanError::api("PERP_ASSET_MAP_DECODE_FAILED", e.to_string())
+            })?;
+            if !entry.metadata.is_active() {
+                continue;
+            }
+            let symbol = entry.symbol.as_str();
+            let perp_metadata = perp_asset_metadata_from_account(symbol, &entry.metadata)?;
             metadata
                 .all_perp_asset_metadata_mut()
                 .insert(symbol.to_ascii_uppercase(), perp_metadata);
@@ -258,7 +267,7 @@ impl AppContext {
     pub fn rpc_client(&self) -> solana_rpc_client::rpc_client::RpcClient {
         solana_rpc_client::rpc_client::RpcClient::new_with_commitment(
             self.config.network.rpc_url.clone(),
-            solana_sdk::commitment_config::CommitmentConfig::confirmed(),
+            CommitmentConfig::confirmed(),
         )
     }
 
@@ -301,7 +310,7 @@ impl AppContext {
     pub fn rpc_client_async(&self) -> solana_rpc_client::nonblocking::rpc_client::RpcClient {
         solana_rpc_client::nonblocking::rpc_client::RpcClient::new_with_commitment(
             self.config.network.rpc_url.clone(),
-            solana_sdk::commitment_config::CommitmentConfig::confirmed(),
+            CommitmentConfig::confirmed(),
         )
     }
 }
@@ -365,35 +374,34 @@ fn perp_asset_metadata_from_account(
     symbol: &str,
     account_metadata: &AccountPerpAssetMetadata,
 ) -> Result<PerpAssetMetadata, crate::error::VulcanError> {
-    let static_params = &account_metadata.static_market_params;
-    let risk_params = &account_metadata.risk_params;
-    let mark_price_ticks = Ticks::new_checked(account_metadata.oracle_price.mark_price.price.ticks)
-        .map_err(|e| crate::error::VulcanError::api("PERP_ASSET_MAP_INVALID", e.to_string()))?;
+    let static_params = account_metadata.static_market_params();
+    let risk_params = account_metadata.risk_params();
+    let mark_price_ticks = account_metadata.oracle_price().mark_price.price.ticks;
     let leverage_tiers = leverage_tiers_from_account(&risk_params.leverage_tiers)?;
     let risk_factors = risk_factors_from_account(&risk_params.risk_factors)?;
     let mut metadata = PerpAssetMetadata::new(
         symbol.to_ascii_uppercase(),
-        static_params.asset_id as u64,
+        static_params.asset_id() as u64,
         static_params.base_lot_decimals,
         mark_price_ticks,
-        QuoteLotsPerBaseLotPerTick::new(static_params.tick_size),
+        static_params.tick_size,
         leverage_tiers,
         risk_factors,
         risk_params.cancel_order_risk_factor,
-        u16_checked(risk_params.upnl_risk_factor, "upnl_risk_factor")?,
+        u16_checked(risk_params.upnl_risk_factor.into(), "upnl_risk_factor")?,
         u16_checked(
-            risk_params.upnl_risk_factor_for_withdrawals,
+            risk_params.upnl_risk_factor_for_withdrawals.into(),
             "upnl_risk_factor_for_withdrawals",
         )?,
     );
-    metadata.cumulative_funding_rate = SignedQuoteLotsPerBaseLot::new(
-        account_metadata.funding_accumulator.cumulative_funding_rate,
-    );
+    metadata.cumulative_funding_rate = account_metadata
+        .funding_accumulator()
+        .cumulative_funding_rate;
     Ok(metadata)
 }
 
 fn leverage_tiers_from_account(
-    tiers: &[phoenix_rise::types::accounts::LeverageTier],
+    tiers: &[AccountLeverageTier],
 ) -> Result<LeverageTiers, crate::error::VulcanError> {
     if tiers.len() != 4 {
         return Err(crate::error::VulcanError::api(
@@ -401,12 +409,12 @@ fn leverage_tiers_from_account(
             format!("Expected 4 leverage tiers, got {}", tiers.len()),
         ));
     }
-    let convert = |tier: &phoenix_rise::types::accounts::LeverageTier| -> Result<LeverageTier, crate::error::VulcanError> {
+    let convert = |tier: &AccountLeverageTier| -> Result<LeverageTier, crate::error::VulcanError> {
         Ok(LeverageTier {
-            upper_bound_size: BaseLots::new(tier.upper_bound_size),
-            max_leverage: Constant::new(tier.max_leverage),
+            upper_bound_size: tier.upper_bound_size,
+            max_leverage: tier.max_leverage,
             limit_order_risk_factor: BasisPoints::new(u16_checked(
-                tier.limit_order_risk_factor,
+                tier.limit_order_risk_factor.into(),
                 "leverage_tier.limit_order_risk_factor",
             )? as u64),
         })
@@ -445,7 +453,7 @@ fn u16_checked(value: u64, field: &str) -> Result<u16, crate::error::VulcanError
 #[cfg(test)]
 mod tests {
     use super::*;
-    use phoenix_rise::types::{AuthoritySet, ExchangeStateSnapshot};
+    use phoenix_rise::types::prelude::{AuthoritySet, ExchangeStateSnapshot};
 
     fn snapshot_fixture(slot: u64) -> ExchangeSnapshotView {
         ExchangeSnapshotView {

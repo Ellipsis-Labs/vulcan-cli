@@ -23,7 +23,7 @@ use crate::strategy::types::{
     StrategySliceStatus, StrategyTick, StrategyWalletContext,
 };
 use chrono::Utc;
-use phoenix_rise::Side;
+use phoenix_rise::ix::types::Side;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -2765,7 +2765,7 @@ mod tests {
 
     #[test]
     fn snap_price_with_calc_quantizes_to_nearest_tick() {
-        use phoenix_rise::math::{MarketCalculator, QuoteLotsPerBaseLotPerTick, WrapperNum};
+        use phoenix_rise::math::{MarketCalculator, QuoteLotsPerBaseLotPerTick};
 
         // base_lot_decimals=2, tick_size=100 → 1 tick = $0.01 (ZEC-like).
         let calc = MarketCalculator::new(2, QuoteLotsPerBaseLotPerTick::new(100));
@@ -2935,7 +2935,7 @@ mod tests {
             margin_feasibility: None,
             safety_policy: StrategySafetyPolicy::default(),
         };
-        use phoenix_rise::math::{MarketCalculator, QuoteLotsPerBaseLotPerTick, WrapperNum};
+        use phoenix_rise::math::{MarketCalculator, QuoteLotsPerBaseLotPerTick};
         let calc = MarketCalculator::new(2, QuoteLotsPerBaseLotPerTick::new(100));
         let replacement = replacement_level(&config, &level, &calc).unwrap();
         assert_eq!(replacement.entry_side, StrategySide::Sell);
@@ -2946,7 +2946,7 @@ mod tests {
 
     #[test]
     fn replacement_snaps_to_tick() {
-        use phoenix_rise::math::{MarketCalculator, QuoteLotsPerBaseLotPerTick, WrapperNum};
+        use phoenix_rise::math::{MarketCalculator, QuoteLotsPerBaseLotPerTick};
         // 1 tick = $0.01 (ZEC-like market).
         let calc = MarketCalculator::new(2, QuoteLotsPerBaseLotPerTick::new(100));
         // Reproduces the ZEC failure mode: a sell at 570.71 fills, and the raw

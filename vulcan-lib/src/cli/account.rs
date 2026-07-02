@@ -7,7 +7,6 @@ pub enum AccountCommand {
     /// Register a trader account on Phoenix
     #[command(group(
         ArgGroup::new("registration_code")
-            .required(true)
             .args(["access_code", "referral_code", "invite_code"])
     ))]
     Register {

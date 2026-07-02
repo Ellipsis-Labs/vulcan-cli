@@ -543,19 +543,23 @@ async fn maybe_register_trader(
     }
     println!("    Address: {}", wallet_file.public_key);
 
-    if let Some(state) =
-        crate::commands::trader_state::try_fetch_trader_state_snapshot(ctx, &authority, 0).await?
-    {
-        if state.find_subaccount(0).is_some() {
-            let trader_key =
-                phoenix_rise::types::TraderKey::new_with_idx(authority, state.trader_pda_index, 0);
-            println!("  ✓ Trader account already registered");
+    match account::trader_onboarding_status(ctx, &authority).await? {
+        phoenix_rise::api::ReferralActivationTraderStatus::Activated => {
+            let trader_key = phoenix_rise::api::TraderKey::new(authority);
+            println!("  ✓ Trader account already registered and onboarded");
             println!("    Trader PDA: {}", trader_key.pda());
             return Ok(());
         }
+        phoenix_rise::api::ReferralActivationTraderStatus::Registered => {
+            let trader_key = phoenix_rise::api::TraderKey::new(authority);
+            println!("  ○ Trader account is registered but still needs onboarding.");
+            println!("    Trader PDA: {}", trader_key.pda());
+        }
+        phoenix_rise::api::ReferralActivationTraderStatus::Missing => {
+            println!("  ○ Trader account is not registered.");
+        }
     }
 
-    println!("  ○ Trader account is not registered.");
     println!("    Registration submits an on-chain transaction and requires SOL for fees.");
     println!();
 
@@ -565,10 +569,11 @@ async fn maybe_register_trader(
     }
 
     println!();
-    println!("  Which code do you have?");
-    println!("    1) Access code");
+    println!("  Which registration path do you want?");
+    println!("    1) No code");
     println!("    2) Referral code");
-    println!("    3) Skip");
+    println!("    3) Access code");
+    println!("    4) Skip");
     println!();
 
     let choice = prompt("  Choice [1]: ")?;
@@ -579,16 +584,7 @@ async fn maybe_register_trader(
     };
 
     let code_kind = match choice {
-        "1" => {
-            let code = prompt("  Access code: ")?;
-            if code.is_empty() {
-                return Err(VulcanError::validation(
-                    "EMPTY_CODE",
-                    "Access code cannot be empty",
-                ));
-            }
-            RegistrationCode::Access(code)
-        }
+        "1" => None,
         "2" => {
             let code = prompt("  Referral code: ")?;
             if code.is_empty() {
@@ -597,16 +593,26 @@ async fn maybe_register_trader(
                     "Referral code cannot be empty",
                 ));
             }
-            RegistrationCode::Referral(code)
+            Some(RegistrationCode::Referral(code))
         }
         "3" => {
+            let code = prompt("  Access code: ")?;
+            if code.is_empty() {
+                return Err(VulcanError::validation(
+                    "EMPTY_CODE",
+                    "Access code cannot be empty",
+                ));
+            }
+            Some(RegistrationCode::Access(code))
+        }
+        "4" => {
             println!("  Skipped registration.");
             return Ok(());
         }
         _ => {
             return Err(VulcanError::validation(
                 "INVALID_CHOICE",
-                "Please enter 1, 2, or 3",
+                "Please enter 1, 2, 3, or 4",
             ));
         }
     };

@@ -4,9 +4,10 @@ use crate::cli::position::PositionCommand;
 use crate::context::AppContext;
 use crate::error::VulcanError;
 use crate::output::{render_success, TableRenderable};
-use phoenix_rise::math::{SignedBaseLots, WrapperNum};
-use phoenix_rise::types::{decimal_from_signed_base_lots, Decimal as UiDecimal};
-use phoenix_rise::Side;
+use phoenix_rise::api::decimal_from_signed_base_lots;
+use phoenix_rise::ix::types::Side;
+use phoenix_rise::math::SignedBaseLots;
+use phoenix_rise::types::prelude::Decimal as UiDecimal;
 use serde::Serialize;
 use solana_pubkey::Pubkey;
 
@@ -557,8 +558,8 @@ async fn execute_close_target_inner(
 
     let mut ixs = if subaccount_index == 0 {
         // Cross-margin: use standard market order
-        let trader_pda = phoenix_rise::types::TraderKey::derive_pda(&authority, 0, 0);
-        let ticket = phoenix_rise::MarketOrderTicket::builder()
+        let trader_pda = phoenix_rise::api::TraderKey::derive_pda(&authority, 0, 0);
+        let ticket = phoenix_rise::core::MarketOrderTicket::builder()
             .authority(authority)
             .trader_account(trader_pda)
             .symbol(symbol)
@@ -572,12 +573,12 @@ async fn execute_close_target_inner(
             .await
             .map_err(|e| VulcanError::api("BUILD_CLOSE_FAILED", e.to_string()))?
     } else {
-        let trader_pda = phoenix_rise::types::TraderKey::derive_pda(
+        let trader_pda = phoenix_rise::api::TraderKey::derive_pda(
             &authority,
             trader_state.trader_pda_index,
             subaccount_index,
         );
-        let ticket = phoenix_rise::MarketOrderTicket::builder()
+        let ticket = phoenix_rise::core::MarketOrderTicket::builder()
             .authority(authority)
             .trader_account(trader_pda)
             .symbol(symbol)
@@ -598,12 +599,12 @@ async fn execute_close_target_inner(
         if let Some(reason) = subaccount.sweep_blocker(Some(&symbol_upper)) {
             (None, Some(reason))
         } else {
-            let child_pda = phoenix_rise::types::TraderKey::derive_pda(
+            let child_pda = phoenix_rise::api::TraderKey::derive_pda(
                 &authority,
                 trader_state.trader_pda_index,
                 subaccount_index,
             );
-            let parent_pda = phoenix_rise::types::TraderKey::derive_pda(
+            let parent_pda = phoenix_rise::api::TraderKey::derive_pda(
                 &authority,
                 trader_state.trader_pda_index,
                 0,
@@ -693,8 +694,8 @@ pub async fn execute_reduce_inner(
 
     let builder = ctx.tx_builder().await?;
     let ixs = if subaccount_index == 0 {
-        let trader_pda = phoenix_rise::types::TraderKey::derive_pda(&authority, 0, 0);
-        let ticket = phoenix_rise::MarketOrderTicket::builder()
+        let trader_pda = phoenix_rise::api::TraderKey::derive_pda(&authority, 0, 0);
+        let ticket = phoenix_rise::core::MarketOrderTicket::builder()
             .authority(authority)
             .trader_account(trader_pda)
             .symbol(symbol)
@@ -708,12 +709,12 @@ pub async fn execute_reduce_inner(
             .await
             .map_err(|e| VulcanError::api("BUILD_REDUCE_FAILED", e.to_string()))?
     } else {
-        let trader_pda = phoenix_rise::types::TraderKey::derive_pda(
+        let trader_pda = phoenix_rise::api::TraderKey::derive_pda(
             &authority,
             trader_state.trader_pda_index,
             subaccount_index,
         );
-        let ticket = phoenix_rise::MarketOrderTicket::builder()
+        let ticket = phoenix_rise::core::MarketOrderTicket::builder()
             .authority(authority)
             .trader_account(trader_pda)
             .symbol(symbol)
@@ -773,7 +774,7 @@ pub async fn execute_tp_sl_inner(
     let (wallet, authority, _) =
         crate::commands::trade::resolve_wallet_and_pda(ctx, Some(&wallet_name)).await?;
 
-    let trader_pda = phoenix_rise::types::TraderKey::derive_pda(
+    let trader_pda = phoenix_rise::api::TraderKey::derive_pda(
         &authority,
         trader_state.trader_pda_index,
         subaccount_index,

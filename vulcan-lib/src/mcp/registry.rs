@@ -893,7 +893,7 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "vulcan_account_register",
-        description: "Register a new trader account with an access code or referral code. At least one of access_code, referral_code, or invite_code must be provided.",
+        description: "Register and onboard a trader account. Omit a code for builder onboarding, pass referral_code for /v1/referral/activate-tx, or pass access_code/invite_code for allowlist activation.",
         group: "account",
         dangerous: true,
         schema: || json!({
@@ -908,7 +908,7 @@ pub static TOOLS: &[ToolDef] = &[
             "additionalProperties": false
         }),
         command: "vulcan account register",
-        example: "vulcan account register --access-code ABC123 --yes -o json",
+        example: "vulcan account register --yes -o json",
         auth_required: true,
     },
 

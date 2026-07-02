@@ -10,6 +10,7 @@ use anyhow::{anyhow, Result};
 use argon2::{password_hash::SaltString, Algorithm, Argon2, Params, PasswordHasher, Version};
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
+use std::convert::TryInto;
 
 /// Encrypted data with metadata needed for decryption
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,13 +85,13 @@ pub fn encrypt(plaintext: &[u8], password: &str) -> Result<EncryptedData> {
 
     let mut nonce_bytes = [0u8; 12];
     OsRng.fill_bytes(&mut nonce_bytes);
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    let nonce = Nonce::from(nonce_bytes);
 
     let cipher =
         Aes256Gcm::new_from_slice(&key).map_err(|e| anyhow!("Failed to create cipher: {}", e))?;
 
     let ciphertext = cipher
-        .encrypt(nonce, plaintext)
+        .encrypt(&nonce, plaintext)
         .map_err(|e| anyhow!("Encryption failed: {}", e))?;
 
     Ok(EncryptedData {
@@ -121,10 +122,14 @@ pub fn decrypt(encrypted: &EncryptedData, password: &str) -> Result<Vec<u8>> {
     let cipher =
         Aes256Gcm::new_from_slice(&key).map_err(|e| anyhow!("Failed to create cipher: {}", e))?;
 
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    let nonce_bytes: [u8; 12] = nonce_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow!("Invalid nonce length"))?;
+    let nonce = Nonce::from(nonce_bytes);
 
     let plaintext = cipher
-        .decrypt(nonce, ciphertext.as_ref())
+        .decrypt(&nonce, ciphertext.as_ref())
         .map_err(|_| anyhow!("Decryption failed - invalid password or corrupted data"))?;
 
     Ok(plaintext)

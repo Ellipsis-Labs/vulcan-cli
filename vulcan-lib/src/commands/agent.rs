@@ -942,7 +942,7 @@ fn live_readiness_from_health(
         wallet_has_sol,
         wallet_has_usdc,
         trader_registered,
-        invite_code_required: has_default_wallet && !trader_registered,
+        invite_code_required: false,
         deposited_collateral_usdc: status.trader.collateral.clone(),
         can_attempt_live_trading: status.api.ok
             && status.rpc.ok
@@ -991,8 +991,10 @@ fn health_next_steps(
     } else if wallets.default_wallet.is_none() {
         steps.push("Set a default wallet: vulcan wallet set-default <NAME>".to_string());
     }
-    if live_readiness.invite_code_required {
-        steps.push("Registration requires an invite/access code: vulcan account register --access-code <CODE> --yes".to_string());
+    if live_readiness.invite_code_required
+        || (live_readiness.has_default_wallet && !status.trader.registered)
+    {
+        steps.push("Register the trader account: vulcan account register --yes (or add --referral-code <CODE> when applicable).".to_string());
     }
     if status.trader.registered {
         steps.push("Wallet funds and deposited collateral are separate. Check deposited collateral and positions: vulcan portfolio -o json".to_string());

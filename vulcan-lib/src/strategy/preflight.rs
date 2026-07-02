@@ -312,7 +312,7 @@ pub async fn check_live_readiness(ctx: &AppContext) -> LiveReadiness {
                 blockers.push(Blocker {
                     code: "TRADER_NOT_REGISTERED",
                     message: "Wallet is not registered as a Phoenix trader.".to_string(),
-                    remedy: "Run `vulcan account register --invite-code <CODE>` (ask for an invite code if needed).".to_string(),
+                    remedy: "Run `vulcan account register --yes` (or add `--referral-code <CODE>` when applicable).".to_string(),
                 });
             }
             _ => {

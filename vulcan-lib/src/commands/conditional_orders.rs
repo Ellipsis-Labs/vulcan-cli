@@ -9,12 +9,12 @@ use crate::commands::trader_state::{
 };
 use crate::context::AppContext;
 use crate::error::VulcanError;
-use phoenix_rise::accounts::{ConditionalOrderCollection, StopLossTradeSide};
-use phoenix_rise::get_conditional_orders_address;
-use phoenix_rise::math::{BaseLots, Side as RiseSide, Ticks, WrapperNum};
-use phoenix_rise::types::PhoenixMetadata;
+use phoenix_rise::accounts::owned::{ConditionalOrderCollection, StopLossTradeSide};
+use phoenix_rise::api::PhoenixMetadata;
+use phoenix_rise::ix::constants::get_conditional_orders_address;
+use phoenix_rise::math::{BaseLots, Side as RiseSide, Ticks};
+use solana_commitment_config::CommitmentConfig;
 use solana_pubkey::Pubkey;
-use solana_sdk::commitment_config::CommitmentConfig;
 use std::collections::{HashMap, HashSet};
 
 /// Fetch and decode the on-chain `ConditionalOrderCollection` for one trader.
@@ -27,7 +27,8 @@ pub async fn fetch_conditional_orders(
     ctx: &AppContext,
     trader_pda: Pubkey,
 ) -> Result<Option<ConditionalOrderCollection>, VulcanError> {
-    let pda = get_conditional_orders_address(&trader_pda);
+    let pda = get_conditional_orders_address(&trader_pda)
+        .map_err(|e| VulcanError::api("CONDITIONAL_ORDERS_PDA_FAILED", e.to_string()))?;
     let rpc = ctx.rpc_client_async();
 
     let account = rpc
@@ -311,7 +312,7 @@ pub(crate) fn project_trader_state_limit_orders(
             out.push(TraderStateLimitOrderView {
                 subaccount_index,
                 symbol: symbol_upper.clone(),
-                side: row.side,
+                side: api_side_to_rise_side(row.side),
                 order_sequence_number: row.order_sequence_number.clone(),
                 order_sequence_number_u64,
                 price_ticks,
@@ -377,12 +378,19 @@ impl StateTriggerProjection<'_> {
                 trigger_price: calc.ticks_to_price(Ticks::new(trigger_price_ticks)),
                 size_tokens: calc.base_lots_to_units(BaseLots::new(size_lots)),
                 side: match row.trigger.side {
-                    RiseSide::Bid => StopLossTradeSide::Bid,
-                    RiseSide::Ask => StopLossTradeSide::Ask,
+                    phoenix_rise::types::prelude::Side::Bid => StopLossTradeSide::Bid,
+                    phoenix_rise::types::prelude::Side::Ask => StopLossTradeSide::Ask,
                 },
                 order_id,
             });
         }
+    }
+}
+
+fn api_side_to_rise_side(side: phoenix_rise::types::prelude::Side) -> RiseSide {
+    match side {
+        phoenix_rise::types::prelude::Side::Bid => RiseSide::Bid,
+        phoenix_rise::types::prelude::Side::Ask => RiseSide::Ask,
     }
 }
 

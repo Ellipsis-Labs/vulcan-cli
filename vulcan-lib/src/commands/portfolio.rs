@@ -12,7 +12,7 @@ use crate::commands::trade::OrdersResult;
 use crate::context::AppContext;
 use crate::error::VulcanError;
 use crate::output::{render_success, TableRenderable};
-use phoenix_rise::types::Decimal as UiDecimal;
+use phoenix_rise::types::prelude::Decimal as UiDecimal;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, Default)]

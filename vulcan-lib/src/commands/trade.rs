@@ -5,9 +5,10 @@ use crate::context::AppContext;
 use crate::error::VulcanError;
 use crate::output::{render_success, TableRenderable};
 use crate::wallet::ResolvedSigner;
-use phoenix_rise::types::{Trader, TraderKey};
+use phoenix_rise::api::{Trader, TraderKey};
 use phoenix_rise::{
-    BracketLeg, BracketLegOrders, BracketLegSize, IsolatedCollateralFlow, OrderFlags, Side,
+    core::{BracketLeg, BracketLegOrders, BracketLegSize},
+    ix::types::{IsolatedCollateralFlow, OrderFlags, Side},
 };
 use serde::Serialize;
 use solana_keychain::SignTransactionResult;
@@ -373,7 +374,7 @@ pub async fn resolve_wallet_and_pda(
         .map_err(|e| VulcanError::validation("INVALID_PUBKEY", e.to_string()))?;
 
     // Default trader PDA: pda_index=0, subaccount_index=0 (cross-margin)
-    let trader_key = phoenix_rise::types::TraderKey::new(authority);
+    let trader_key = phoenix_rise::api::TraderKey::new(authority);
     let trader_pda = trader_key.pda();
 
     if ctx.dry_run {
@@ -448,12 +449,12 @@ pub(crate) async fn sdk_trader_for_isolated_builder(
 pub fn bracket_leg_orders(
     tp: Option<f64>,
     sl: Option<f64>,
-) -> Option<phoenix_rise::BracketLegOrders> {
+) -> Option<phoenix_rise::core::BracketLegOrders> {
     if tp.is_none() && sl.is_none() {
         return None;
     }
 
-    Some(phoenix_rise::BracketLegOrders {
+    Some(phoenix_rise::core::BracketLegOrders {
         take_profit: tp.map(BracketLeg::new),
         stop_loss: sl.map(BracketLeg::new),
     })
@@ -518,7 +519,7 @@ pub async fn send_or_dry_run_with_cu_limit(
     let cu_limit = cu_limit.min(MAX_CU_LIMIT);
     let mut all_ixs = Vec::with_capacity(ixs.len() + 1);
     all_ixs.push(
-        solana_sdk::compute_budget::ComputeBudgetInstruction::set_compute_unit_limit(cu_limit),
+        solana_compute_budget_interface::ComputeBudgetInstruction::set_compute_unit_limit(cu_limit),
     );
     all_ixs.extend(ixs);
 
@@ -560,11 +561,13 @@ pub async fn send_or_dry_run_with_cu_limit(
 /// subaccount flows.
 pub(crate) async fn conditional_orders_init_ixs_if_needed(
     ctx: &AppContext,
-    builder: &phoenix_rise::PhoenixTxBuilder<'_>,
+    builder: &phoenix_rise::core::PhoenixTxBuilder<'_>,
     authority: Pubkey,
     trader_pda: Pubkey,
 ) -> Result<Vec<solana_sdk::instruction::Instruction>, VulcanError> {
-    let conditional_orders = phoenix_rise::get_conditional_orders_address(&trader_pda);
+    let conditional_orders =
+        phoenix_rise::ix::constants::get_conditional_orders_address(&trader_pda)
+            .map_err(|e| VulcanError::api("CONDITIONAL_ORDERS_PDA_FAILED", e.to_string()))?;
     let rpc_client = ctx.rpc_client_async();
     let response = rpc_client
         .get_account_with_commitment(&conditional_orders, rpc_client.commitment())
@@ -607,15 +610,15 @@ fn insert_before_first_order_or_conditional_ix(
 }
 
 fn is_order_or_position_conditional_ix(ix: &solana_sdk::instruction::Instruction) -> bool {
-    ix.program_id == *phoenix_rise::phoenix_rise_ix::PHOENIX_PROGRAM_ID
+    ix.program_id == *phoenix_rise::ix::PHOENIX_PROGRAM_ID
         && (ix
             .data
-            .starts_with(&phoenix_rise::phoenix_rise_ix::place_market_order_discriminant())
+            .starts_with(&phoenix_rise::ix::PhoenixInstruction::PlaceMarketOrder.discriminant())
             || ix
                 .data
-                .starts_with(&phoenix_rise::phoenix_rise_ix::place_limit_order_discriminant())
+                .starts_with(&phoenix_rise::ix::PhoenixInstruction::PlaceLimitOrder.discriminant())
             || ix.data.starts_with(
-                &phoenix_rise::phoenix_rise_ix::place_position_conditional_order_discriminant(),
+                &phoenix_rise::ix::PhoenixInstruction::PlacePositionConditionalOrder.discriminant(),
             ))
 }
 
@@ -1072,7 +1075,7 @@ pub async fn execute_market_order_inner(
             ));
         }
 
-        let mut ticket_builder = phoenix_rise::MarketOrderTicket::builder()
+        let mut ticket_builder = phoenix_rise::core::MarketOrderTicket::builder()
             .authority(authority)
             .trader_account(trader_pda)
             .symbol(symbol)
@@ -1081,8 +1084,9 @@ pub async fn execute_market_order_inner(
 
         if let Some(bracket) = bracket {
             let rpc_client = Arc::new(ctx.rpc_client_async());
-            ticket_builder = ticket_builder
-                .bracket_leg_ticket(phoenix_rise::BracketLegTicket::new(rpc_client, bracket));
+            ticket_builder = ticket_builder.bracket_leg_ticket(
+                phoenix_rise::core::BracketLegTicket::new(rpc_client, bracket),
+            );
         }
 
         let ticket = ticket_builder
@@ -1239,7 +1243,7 @@ pub async fn execute_limit_order_inner(
                 );
             }
 
-            let mut ticket_builder = phoenix_rise::LimitOrderTicket::builder()
+            let mut ticket_builder = phoenix_rise::core::LimitOrderTicket::builder()
                 .authority(authority)
                 .trader_account(sub_key.pda())
                 .symbol(symbol)
@@ -1254,8 +1258,9 @@ pub async fn execute_limit_order_inner(
 
             if let Some(bracket) = bracket {
                 let rpc_client = Arc::new(ctx.rpc_client_async());
-                ticket_builder = ticket_builder
-                    .bracket_leg_ticket(phoenix_rise::BracketLegTicket::new(rpc_client, bracket));
+                ticket_builder = ticket_builder.bracket_leg_ticket(
+                    phoenix_rise::core::BracketLegTicket::new(rpc_client, bracket),
+                );
             }
 
             let ticket = ticket_builder
@@ -1326,7 +1331,7 @@ pub async fn execute_limit_order_inner(
             ));
         }
 
-        let mut ticket_builder = phoenix_rise::LimitOrderTicket::builder()
+        let mut ticket_builder = phoenix_rise::core::LimitOrderTicket::builder()
             .authority(authority)
             .trader_account(trader_pda)
             .symbol(symbol)
@@ -1340,8 +1345,9 @@ pub async fn execute_limit_order_inner(
 
         if let Some(bracket) = bracket {
             let rpc_client = Arc::new(ctx.rpc_client_async());
-            ticket_builder = ticket_builder
-                .bracket_leg_ticket(phoenix_rise::BracketLegTicket::new(rpc_client, bracket));
+            ticket_builder = ticket_builder.bracket_leg_ticket(
+                phoenix_rise::core::BracketLegTicket::new(rpc_client, bracket),
+            );
         }
 
         let ticket = ticket_builder
@@ -1415,7 +1421,7 @@ pub async fn execute_multi_limit_order_inner(
         let mut all_ixs: Vec<solana_sdk::instruction::Instruction> = Vec::new();
         for (legs, side) in [(&bids, Side::Bid), (&asks, Side::Ask)] {
             for leg in legs.iter() {
-                let mut ticket_builder = phoenix_rise::LimitOrderTicket::builder()
+                let mut ticket_builder = phoenix_rise::core::LimitOrderTicket::builder()
                     .authority(authority)
                     .trader_account(trader_pda)
                     .symbol(symbol)
@@ -1425,7 +1431,7 @@ pub async fn execute_multi_limit_order_inner(
 
                 if let Some(bracket) = bracket_leg_orders(leg.tp, leg.sl) {
                     ticket_builder = ticket_builder.bracket_leg_ticket(
-                        phoenix_rise::BracketLegTicket::new(rpc_client.clone(), bracket),
+                        phoenix_rise::core::BracketLegTicket::new(rpc_client.clone(), bracket),
                     );
                 }
 
@@ -1552,7 +1558,7 @@ async fn execute_limit_order(
 
 struct LimitOrderCancelSelection {
     order_ids: Vec<String>,
-    cancel_ids_by_subaccount: BTreeMap<u8, Vec<phoenix_rise::CancelId>>,
+    cancel_ids_by_subaccount: BTreeMap<u8, Vec<phoenix_rise::ix::types::CancelId>>,
 }
 
 async fn api_limit_order_cancel_selection(
@@ -1592,12 +1598,13 @@ async fn api_limit_order_cancel_selection(
         }
     }
 
-    let mut cancel_ids_by_subaccount: BTreeMap<u8, Vec<phoenix_rise::CancelId>> = BTreeMap::new();
+    let mut cancel_ids_by_subaccount: BTreeMap<u8, Vec<phoenix_rise::ix::types::CancelId>> =
+        BTreeMap::new();
     for order in &selected {
         cancel_ids_by_subaccount
             .entry(order.subaccount_index)
             .or_default()
-            .push(phoenix_rise::CancelId::new(
+            .push(phoenix_rise::ix::types::CancelId::new(
                 order.price_ticks,
                 order.order_sequence_number_u64,
             ));
@@ -2183,9 +2190,9 @@ pub async fn execute_cancel_tpsl_inner(
             let mut ixs = Vec::new();
             if cancel_tp {
                 let tp_direction = if is_long {
-                    phoenix_rise::Direction::GreaterThan
+                    phoenix_rise::ix::types::Direction::GreaterThan
                 } else {
-                    phoenix_rise::Direction::LessThan
+                    phoenix_rise::ix::types::Direction::LessThan
                 };
                 let tp_ixs = builder
                     .build_cancel_bracket_leg(authority, trader_pda, &symbol_upper, tp_direction)
@@ -2194,9 +2201,9 @@ pub async fn execute_cancel_tpsl_inner(
             }
             if cancel_sl {
                 let sl_direction = if is_long {
-                    phoenix_rise::Direction::LessThan
+                    phoenix_rise::ix::types::Direction::LessThan
                 } else {
-                    phoenix_rise::Direction::GreaterThan
+                    phoenix_rise::ix::types::Direction::GreaterThan
                 };
                 let sl_ixs = builder
                     .build_cancel_bracket_leg(authority, trader_pda, &symbol_upper, sl_direction)
@@ -2416,7 +2423,7 @@ fn build_cancel_conditional_order_ix(
     disable_first: bool,
     disable_second: bool,
 ) -> Result<solana_sdk::instruction::Instruction, VulcanError> {
-    let params = phoenix_rise::CancelConditionalOrderParams::builder()
+    let params = phoenix_rise::ix::conditional_order::CancelConditionalOrderParams::builder()
         .trader_account(trader_pda)
         .trader_wallet(authority)
         .orderbook(orderbook)
@@ -2425,7 +2432,7 @@ fn build_cancel_conditional_order_ix(
         .disable_second(disable_second)
         .build()
         .map_err(|e| VulcanError::api("BUILD_CANCEL_COND_FAILED", e.to_string()))?;
-    let ix = phoenix_rise::phoenix_rise_ix::create_cancel_conditional_order_ix(params)
+    let ix = phoenix_rise::ix::conditional_order::create_cancel_conditional_order_ix(params)
         .map_err(|e| VulcanError::api("BUILD_CANCEL_COND_FAILED", e.to_string()))?;
     Ok(ix.into())
 }
@@ -2471,10 +2478,7 @@ mod conditional_orders_init_tests {
     }
 
     fn phoenix_ix(discriminant: [u8; 8]) -> solana_sdk::instruction::Instruction {
-        test_ix(
-            *phoenix_rise::phoenix_rise_ix::PHOENIX_PROGRAM_ID,
-            discriminant.to_vec(),
-        )
+        test_ix(*phoenix_rise::ix::PHOENIX_PROGRAM_ID, discriminant.to_vec())
     }
 
     #[test]
@@ -2482,9 +2486,9 @@ mod conditional_orders_init_tests {
         let setup_ix = test_ix(Pubkey::new_unique(), vec![1]);
         let init_ix = test_ix(Pubkey::new_unique(), vec![2]);
         let market_ix =
-            phoenix_ix(phoenix_rise::phoenix_rise_ix::place_market_order_discriminant());
+            phoenix_ix(phoenix_rise::ix::PhoenixInstruction::PlaceMarketOrder.discriminant());
         let conditional_ix = phoenix_ix(
-            phoenix_rise::phoenix_rise_ix::place_position_conditional_order_discriminant(),
+            phoenix_rise::ix::PhoenixInstruction::PlacePositionConditionalOrder.discriminant(),
         );
         let mut ixs = vec![setup_ix.clone(), market_ix.clone(), conditional_ix.clone()];
 
@@ -2501,7 +2505,7 @@ mod conditional_orders_init_tests {
         let setup_ix = test_ix(Pubkey::new_unique(), vec![1]);
         let init_ix = test_ix(Pubkey::new_unique(), vec![2]);
         let conditional_ix = phoenix_ix(
-            phoenix_rise::phoenix_rise_ix::place_position_conditional_order_discriminant(),
+            phoenix_rise::ix::PhoenixInstruction::PlacePositionConditionalOrder.discriminant(),
         );
         let mut ixs = vec![setup_ix.clone(), conditional_ix.clone()];
 
