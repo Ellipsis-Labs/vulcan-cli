@@ -37,11 +37,6 @@ pub struct RegisterResult {
     pub tx_signature: Option<String>,
 }
 
-pub enum RegistrationCode {
-    Access(String),
-    Referral(String),
-}
-
 pub(crate) async fn trader_onboarding_status(
     ctx: &AppContext,
     authority: &Pubkey,
@@ -51,24 +46,6 @@ pub(crate) async fn trader_onboarding_status(
     fetch_referral_activation_trader_status(&rpc_client, &trader.pda())
         .await
         .map_err(|e| VulcanError::network("TRADER_STATUS_FAILED", e.to_string()))
-}
-
-fn parse_registration_code(
-    access_code: Option<String>,
-    referral_code: Option<String>,
-    invite_code: Option<String>,
-) -> Result<Option<RegistrationCode>, VulcanError> {
-    match (access_code, referral_code, invite_code) {
-        (None, None, None) => Ok(None),
-        (Some(code), None, None) | (None, None, Some(code)) => {
-            Ok(Some(RegistrationCode::Access(code)))
-        }
-        (None, Some(code), None) => Ok(Some(RegistrationCode::Referral(code))),
-        _ => Err(VulcanError::validation(
-            "REGISTRATION_CODE_CONFLICT",
-            "Provide at most one of --access-code, --referral-code, or --invite-code",
-        )),
-    }
 }
 
 fn trader_account_size(max_positions: u32) -> Result<usize, VulcanError> {
@@ -284,14 +261,9 @@ fn resolve_authority(ctx: &AppContext) -> Result<(String, Pubkey), VulcanError> 
 
 pub async fn execute(ctx: &AppContext, cmd: AccountCommand) -> Result<(), VulcanError> {
     match cmd {
-        AccountCommand::Register {
-            access_code,
-            referral_code,
-            invite_code,
-        } => {
+        AccountCommand::Register { referral_code } => {
             let (wallet_name, authority) = resolve_authority(ctx)?;
-            let code = parse_registration_code(access_code, referral_code, invite_code)?;
-            let result = register_authority(ctx, &wallet_name, authority, code).await?;
+            let result = register_authority(ctx, &wallet_name, authority, referral_code).await?;
 
             render_success(ctx.output_format, &result, serde_json::Value::Null);
             Ok(())
@@ -469,30 +441,16 @@ pub async fn execute_info_inner(ctx: &AppContext) -> Result<AccountInfoResult, V
 
 pub async fn execute_register_inner(
     ctx: &AppContext,
-    invite_code: &str,
+    referral_code: Option<String>,
 ) -> Result<RegisterResult, VulcanError> {
     let (wallet_name, authority) = resolve_authority(ctx)?;
-    register_authority(
-        ctx,
-        &wallet_name,
-        authority,
-        Some(RegistrationCode::Access(invite_code.to_string())),
-    )
-    .await
+    register_authority(ctx, &wallet_name, authority, referral_code).await
 }
 
-pub async fn execute_register_with_code_inner(
-    ctx: &AppContext,
-    code: Option<RegistrationCode>,
-) -> Result<RegisterResult, VulcanError> {
-    let (wallet_name, authority) = resolve_authority(ctx)?;
-    register_authority(ctx, &wallet_name, authority, code).await
-}
-
-pub async fn execute_register_wallet_with_code_inner(
+pub async fn execute_register_wallet_inner(
     ctx: &AppContext,
     wallet_name: &str,
-    code: Option<RegistrationCode>,
+    referral_code: Option<String>,
 ) -> Result<RegisterResult, VulcanError> {
     let wallet_file = ctx
         .wallet_store
@@ -500,77 +458,7 @@ pub async fn execute_register_wallet_with_code_inner(
         .map_err(|e| VulcanError::auth("WALLET_NOT_FOUND", e.to_string()))?;
     let authority = Pubkey::from_str(&wallet_file.public_key)
         .map_err(|e| VulcanError::validation("INVALID_PUBKEY", e.to_string()))?;
-    register_authority(ctx, wallet_name, authority, code).await
-}
-
-async fn is_cross_margin_registered(
-    ctx: &AppContext,
-    authority: &Pubkey,
-) -> Result<bool, VulcanError> {
-    Ok(
-        crate::commands::trader_state::try_fetch_trader_state_snapshot(ctx, authority, 0)
-            .await?
-            .is_some_and(|state| state.has_cross_margin_subaccount()),
-    )
-}
-
-async fn activate_access_code(
-    ctx: &AppContext,
-    authority: &Pubkey,
-    code: &str,
-) -> Result<(), VulcanError> {
-    ctx.http_client
-        .invite()
-        .activate_invite(authority, code)
-        .await
-        .map_err(|e| VulcanError::api("REGISTER_API_FAILED", e.to_string()))?;
-    Ok(())
-}
-
-async fn submit_local_register_tx(
-    ctx: &AppContext,
-    wallet_name: &str,
-    authority: Pubkey,
-) -> Result<Option<String>, VulcanError> {
-    ensure_sol_for_cross_trader_rent(ctx, authority, CROSS_MARGIN_MAX_POSITIONS).await?;
-
-    let builder = ctx.tx_builder().await?;
-    let ixs = builder
-        .build_register_trader(authority, 0, 0)
-        .map_err(|e| VulcanError::api("BUILD_REGISTER_FAILED", e.to_string()))?;
-
-    let (wallet, _, _) =
-        crate::commands::trade::resolve_wallet_and_pda(ctx, Some(wallet_name)).await?;
-    let fee_payer = wallet.signer()?.pubkey();
-    if fee_payer != wallet.authority {
-        return Err(VulcanError::auth(
-            "SIGNER_PUBKEY_MISMATCH",
-            format!(
-                "Signer pubkey {} does not match active wallet authority {}",
-                fee_payer, wallet.authority
-            ),
-        ));
-    }
-    let mut simulation_ixs = Vec::with_capacity(ixs.len() + 1);
-    simulation_ixs.push(
-        solana_compute_budget_interface::ComputeBudgetInstruction::set_compute_unit_limit(
-            crate::commands::trade::DEFAULT_CU_LIMIT,
-        ),
-    );
-    simulation_ixs.extend(ixs.iter().cloned());
-    simulate_onboarding_transaction(ctx, &simulation_ixs, fee_payer).await?;
-
-    match crate::commands::trade::send_or_dry_run(ctx, ixs, &wallet).await {
-        Ok(sig) => Ok(sig),
-        Err(err)
-            if err.category == crate::error::ErrorCategory::TxFailed
-                && is_cross_margin_registered(ctx, &authority).await? =>
-        {
-            eprintln!("Registration transaction failed, but trader account is now registered.");
-            Ok(None)
-        }
-        Err(err) => Err(err),
-    }
+    register_authority(ctx, wallet_name, authority, referral_code).await
 }
 
 fn api_instruction_to_solana(
@@ -865,7 +753,7 @@ async fn register_authority(
     ctx: &AppContext,
     wallet_name: &str,
     authority: Pubkey,
-    code: Option<RegistrationCode>,
+    referral_code: Option<String>,
 ) -> Result<RegisterResult, VulcanError> {
     let status = trader_onboarding_status(ctx, &authority).await?;
 
@@ -875,22 +763,9 @@ async fn register_authority(
     } else if ctx.dry_run {
         None
     } else {
-        match code {
-            Some(RegistrationCode::Access(code)) => {
-                activate_access_code(ctx, &authority, code.as_str()).await?;
-
-                if is_cross_margin_registered(ctx, &authority).await? {
-                    eprintln!(
-                        "Trader account registered after code activation; skipping on-chain transaction."
-                    );
-                    None
-                } else {
-                    submit_local_register_tx(ctx, wallet_name, authority).await?
-                }
-            }
-            Some(RegistrationCode::Referral(referral_code)) => {
-                submit_referral_activation_tx(ctx, wallet_name, authority, referral_code, status)
-                    .await?
+        match referral_code {
+            Some(code) => {
+                submit_referral_activation_tx(ctx, wallet_name, authority, code, status).await?
             }
             None => submit_builder_onboarding_tx(ctx, wallet_name, authority, status).await?,
         }

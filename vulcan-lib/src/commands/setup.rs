@@ -1,7 +1,7 @@
 //! Interactive setup wizard — wallet creation, config, registration, and connectivity check.
 
 use crate::cli::agent::{AgentScope, AgentTarget};
-use crate::commands::account::{self, RegistrationCode};
+use crate::commands::account;
 use crate::commands::agent;
 use crate::config::VulcanConfig;
 use crate::context::AppContext;
@@ -569,56 +569,12 @@ async fn maybe_register_trader(
     }
 
     println!();
-    println!("  Which registration path do you want?");
-    println!("    1) No code");
-    println!("    2) Referral code");
-    println!("    3) Access code");
-    println!("    4) Skip");
-    println!();
+    println!("  If you have a referral code, enter it now.");
+    println!("  Press Enter to skip and register without a code.");
+    let code = prompt("  Referral code (optional): ")?;
+    let referral_code = if code.is_empty() { None } else { Some(code) };
 
-    let choice = prompt("  Choice [1]: ")?;
-    let choice = if choice.is_empty() {
-        "1"
-    } else {
-        choice.as_str()
-    };
-
-    let code_kind = match choice {
-        "1" => None,
-        "2" => {
-            let code = prompt("  Referral code: ")?;
-            if code.is_empty() {
-                return Err(VulcanError::validation(
-                    "EMPTY_CODE",
-                    "Referral code cannot be empty",
-                ));
-            }
-            Some(RegistrationCode::Referral(code))
-        }
-        "3" => {
-            let code = prompt("  Access code: ")?;
-            if code.is_empty() {
-                return Err(VulcanError::validation(
-                    "EMPTY_CODE",
-                    "Access code cannot be empty",
-                ));
-            }
-            Some(RegistrationCode::Access(code))
-        }
-        "4" => {
-            println!("  Skipped registration.");
-            return Ok(());
-        }
-        _ => {
-            return Err(VulcanError::validation(
-                "INVALID_CHOICE",
-                "Please enter 1, 2, 3, or 4",
-            ));
-        }
-    };
-
-    let result =
-        account::execute_register_wallet_with_code_inner(ctx, &wallet_name, code_kind).await?;
+    let result = account::execute_register_wallet_inner(ctx, &wallet_name, referral_code).await?;
     println!("  ✓ Trader account registered");
     println!("    Trader PDA: {}", result.trader_pda);
     if let Some(sig) = result.tx_signature {

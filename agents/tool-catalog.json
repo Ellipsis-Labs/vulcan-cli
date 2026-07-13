@@ -1121,27 +1121,15 @@
       "name": "vulcan_account_register",
       "command": "vulcan account register",
       "group": "account",
-      "description": "Register and onboard a trader account. Omit a code for builder onboarding, pass referral_code for /v1/referral/activate-tx, or pass access_code/invite_code for allowlist activation.",
+      "description": "Register and onboard a trader account. Omit referral_code for builder onboarding, or pass it to activate via /v1/referral/activate-tx.",
       "auth_required": true,
       "dangerous": true,
       "parameters": [
         {
-          "name": "access_code",
-          "type": "string",
-          "required": false,
-          "description": "Access code for registration"
-        },
-        {
           "name": "referral_code",
           "type": "string",
           "required": false,
-          "description": "Referral code for registration"
-        },
-        {
-          "name": "invite_code",
-          "type": "string",
-          "required": false,
-          "description": "Backwards-compatible alias for access_code"
+          "description": "Referral code (optional; omit for builder onboarding)"
         },
         {
           "name": "acknowledged",

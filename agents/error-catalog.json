@@ -16,6 +16,10 @@
       "category": "validation",
       "recovery": "Add --yes flag to confirm, or --dry-run to simulate without executing"
     },
+    "ACCESS_CODE_REMOVED": {
+      "category": "validation",
+      "recovery": "Access and invite codes are no longer supported. Pass referral_code, or omit it to register via builder onboarding"
+    },
     "NOT_IMPLEMENTED": {
       "category": "validation",
       "recovery": "This feature is not yet available. Check for updates."
@@ -123,10 +127,6 @@
     "MCP_INIT_FAILED": {
       "category": "config",
       "recovery": "MCP server failed to initialize. Check config and try again"
-    },
-    "REGISTER_API_FAILED": {
-      "category": "api",
-      "recovery": "Check your registration code and API URL. Run 'vulcan status' to verify connectivity"
     },
     "TRADERS_FETCH_FAILED": {
       "category": "api",

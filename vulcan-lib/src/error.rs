@@ -146,7 +146,6 @@ impl VulcanError {
             "REGISTRATION_SIMULATION_FAILED" => {
                 "Check the simulation logs, payer SOL balance, and account state before retrying registration"
             }
-            "REGISTER_API_FAILED" => "Check registration code and API URL. Run 'vulcan status' to verify",
             "TX_SEND_FAILED" => "Check wallet SOL balance and account state",
             "CONFIG_ERROR" | "CONFIG_LOAD_FAILED" | "INIT_FAILED" => {
                 "Run 'vulcan setup' to configure"
