@@ -111,7 +111,7 @@ vulcan_wallet_balance → {}
 
 ## Step 4: Register Trader Account
 
-Registration can be completed without a code through builder onboarding. If the user has a referral code, pass it so Vulcan uses the referral activation transaction flow. The setup wizard prompts for an optional referral code interactively:
+A referral code is optional: when the user has one, pass it; when omitted, Vulcan registers with its default referral code. The setup wizard prompts for an optional referral code interactively:
 
 ```bash
 vulcan account register
@@ -125,7 +125,7 @@ vulcan_account_register → { acknowledged: true }
 vulcan_account_register → { referral_code: "YOUR_CODE", acknowledged: true }
 ```
 
-Registration submits a signed onboarding transaction for the default cross-margin subaccount. Referral codes use `/v1/referral/activate-tx`; no-code onboarding uses the exchange builder endpoints. If the trader is already registered, verify with `vulcan_account_info`.
+Registration submits a signed onboarding transaction for the default cross-margin subaccount via `/v1/referral/activate-tx`; the wallet pays the transaction fee and trader-account rent, and the API adds the onboarder co-signature. If the trader is already registered, verify with `vulcan_account_info`.
 
 ## Step 5: Deposit Collateral
 

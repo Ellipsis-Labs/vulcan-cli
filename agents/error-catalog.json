@@ -18,7 +18,7 @@
     },
     "ACCESS_CODE_REMOVED": {
       "category": "validation",
-      "recovery": "Access and invite codes are no longer supported. Pass referral_code, or omit it to register via builder onboarding"
+      "recovery": "Access and invite codes are no longer supported. Pass referral_code, or omit it to register with the default referral code"
     },
     "NOT_IMPLEMENTED": {
       "category": "validation",

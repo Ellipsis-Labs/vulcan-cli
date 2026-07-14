@@ -893,13 +893,13 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "vulcan_account_register",
-        description: "Register and onboard a trader account. Omit referral_code for builder onboarding, or pass it to activate via /v1/referral/activate-tx.",
+        description: "Register and onboard a trader account via /v1/referral/activate-tx. Omit referral_code to register with the default code.",
         group: "account",
         dangerous: true,
         schema: || json!({
             "type": "object",
             "properties": {
-                "referral_code": { "type": "string", "description": "Referral code (optional; omit for builder onboarding)" },
+                "referral_code": { "type": "string", "description": "Referral code (optional; the default code is used when omitted)" },
                 "acknowledged": { "type": "boolean", "description": "Must be true to execute" }
             },
             "required": ["acknowledged"],

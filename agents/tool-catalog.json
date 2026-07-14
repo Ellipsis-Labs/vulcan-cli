@@ -1121,7 +1121,7 @@
       "name": "vulcan_account_register",
       "command": "vulcan account register",
       "group": "account",
-      "description": "Register and onboard a trader account. Omit referral_code for builder onboarding, or pass it to activate via /v1/referral/activate-tx.",
+      "description": "Register and onboard a trader account via /v1/referral/activate-tx. Omit referral_code to register with the default code.",
       "auth_required": true,
       "dangerous": true,
       "parameters": [
@@ -1129,7 +1129,7 @@
           "name": "referral_code",
           "type": "string",
           "required": false,
-          "description": "Referral code (optional; omit for builder onboarding)"
+          "description": "Referral code (optional; the default code is used when omitted)"
         },
         {
           "name": "acknowledged",

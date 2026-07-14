@@ -6,7 +6,7 @@ use clap::Subcommand;
 pub enum AccountCommand {
     /// Register a trader account on Phoenix
     Register {
-        /// Referral code (optional; omit to register via builder onboarding)
+        /// Referral code (optional; the default code is used when omitted)
         #[arg(long)]
         referral_code: Option<String>,
     },
