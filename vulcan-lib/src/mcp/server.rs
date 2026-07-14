@@ -757,27 +757,17 @@ impl VulcanMcpServer {
                 Ok(serde_json::to_value(result).unwrap())
             }
             "vulcan_account_register" => {
-                let code = match (
-                    arg_str_opt(args, "access_code"),
-                    arg_str_opt(args, "referral_code"),
-                    arg_str_opt(args, "invite_code"),
-                ) {
-                    (None, None, None) => None,
-                    (Some(code), None, None) | (None, None, Some(code)) => {
-                        Some(commands::account::RegistrationCode::Access(code))
-                    }
-                    (None, Some(code), None) => {
-                        Some(commands::account::RegistrationCode::Referral(code))
-                    }
-                    _ => {
-                        return Err(crate::error::VulcanError::validation(
-                            "REGISTRATION_CODE_CONFLICT",
-                            "Provide at most one of access_code, referral_code, or invite_code",
-                        ));
-                    }
-                };
+                if arg_str_opt(args, "access_code").is_some()
+                    || arg_str_opt(args, "invite_code").is_some()
+                {
+                    return Err(crate::error::VulcanError::validation(
+                        "ACCESS_CODE_REMOVED",
+                        "Access and invite codes are no longer supported. Pass referral_code, or omit it to register via builder onboarding.",
+                    ));
+                }
+                let referral_code = arg_str_opt(args, "referral_code");
                 let result =
-                    commands::account::execute_register_with_code_inner(&self.ctx, code).await?;
+                    commands::account::execute_register_inner(&self.ctx, referral_code).await?;
                 Ok(serde_json::to_value(result).unwrap())
             }
 

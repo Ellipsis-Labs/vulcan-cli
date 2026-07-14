@@ -367,8 +367,7 @@ pub fn summarize_args(args: &Value) -> Value {
                 );
             }
             "size" | "tokens" | "notional_usdc" | "price" | "tp" | "sl" | "collateral"
-            | "amount" | "access_code" | "referral_code" | "invite_code" | "api_key"
-            | "password" => {
+            | "amount" | "referral_code" | "api_key" | "password" => {
                 out.insert(key.clone(), serde_json::json!({ "provided": true }));
             }
             "acknowledged" => {}
@@ -1360,7 +1359,7 @@ mod tests {
             "symbol": "SOL",
             "side": "buy",
             "notional_usdc": 100,
-            "access_code": "SECRET",
+            "referral_code": "SECRET",
             "password": "WALLET_SECRET",
             "VULCAN_WALLET_PASSWORD": "ENV_SECRET",
             "private_key": "PRIVATE_SECRET",
@@ -1371,7 +1370,7 @@ mod tests {
         assert_eq!(redacted["symbol"], "SOL");
         assert_eq!(redacted["notional_usdc"]["provided"], true);
         assert!(redacted.get("acknowledged").is_none());
-        assert_ne!(redacted["access_code"], "SECRET");
+        assert_ne!(redacted["referral_code"], "SECRET");
         let encoded = serde_json::to_string(&redacted).unwrap();
         assert!(!encoded.contains("WALLET_SECRET"));
         assert!(!encoded.contains("ENV_SECRET"));

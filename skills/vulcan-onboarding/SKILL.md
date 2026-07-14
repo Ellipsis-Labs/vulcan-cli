@@ -62,7 +62,7 @@ Steps 2–6 below are for **live** setup only and should not run if the user has
 ## Prerequisites
 
 - Solana wallet with SOL (for transaction fees) and USDC (for collateral).
-- An access code or referral code for Phoenix DEX registration.
+- Optionally, a referral code for Phoenix DEX registration (registration also works without one).
 
 ## Step 1: Install and Configure
 
@@ -73,7 +73,7 @@ vulcan agent health -o json    # readiness and next steps
 vulcan agent mcp doctor --target cursor --scope user -o json
 ```
 
-Setup creates `~/.vulcan/config.toml`, checks trader registration status, can complete registration with no code, an access code, or a referral code, and can install read-only/paper MCP config. The Phoenix API session is signed in automatically using the configured wallet — no separate login step is required.
+Setup creates `~/.vulcan/config.toml`, checks trader registration status, can complete registration with or without a referral code, and can install read-only/paper MCP config. The Phoenix API session is signed in automatically using the configured wallet — no separate login step is required.
 
 MCP is optional for paper and dry-run usage. For agent-driven live trading, prefer dangerous MCP with an unlocked session wallet: `vulcan agent mcp install --target cursor --dangerous`. Use this only after the user accepts that `VULCAN_WALLET_PASSWORD` may live in plaintext agent config.
 
@@ -111,12 +111,11 @@ vulcan_wallet_balance → {}
 
 ## Step 4: Register Trader Account
 
-Registration can be completed without a code through builder onboarding. If the user has a referral code, pass it so Vulcan uses the referral activation transaction flow; access codes remain supported for allowlist activation. The setup wizard can choose the path interactively:
+A referral code is optional: when the user has one, pass it; when omitted, Vulcan registers with its default referral code. The setup wizard prompts for an optional referral code interactively:
 
 ```bash
 vulcan account register
 vulcan account register --referral-code <CODE>
-vulcan account register --access-code <CODE>
 ```
 
 For MCP:
@@ -124,11 +123,9 @@ For MCP:
 ```
 vulcan_account_register → { acknowledged: true }
 vulcan_account_register → { referral_code: "YOUR_CODE", acknowledged: true }
-vulcan_account_register → { access_code: "YOUR_CODE", acknowledged: true }
-vulcan_account_register → { invite_code: "YOUR_CODE", acknowledged: true } # backwards-compatible alias
 ```
 
-Registration submits a signed onboarding transaction for the default cross-margin subaccount. Referral codes use `/v1/referral/activate-tx`; no-code onboarding uses the exchange builder endpoints. If the trader is already registered, verify with `vulcan_account_info`.
+Registration submits a signed onboarding transaction for the default cross-margin subaccount via `/v1/referral/activate-tx`; the wallet pays the transaction fee and trader-account rent, and the API adds the onboarder co-signature. If the trader is already registered, verify with `vulcan_account_info`.
 
 ## Step 5: Deposit Collateral
 
@@ -170,6 +167,5 @@ Then place a small test trade.
 | `DECRYPT_FAILED`      | Wrong password. Set `VULCAN_WALLET_PASSWORD`                 |
 | `NO_TRADER_ACCOUNT`   | Register with `vulcan account register`                      |
 | `CONFIG_ERROR`        | Run `vulcan setup`                                           |
-| `REGISTER_API_FAILED` | Check code validity and `api_url` in `~/.vulcan/config.toml` |
 | Insufficient SOL      | Fund wallet with SOL for tx fees                             |
 | Insufficient USDC     | Transfer USDC to wallet address                              |
