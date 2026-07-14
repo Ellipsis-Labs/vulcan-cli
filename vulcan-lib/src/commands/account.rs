@@ -512,7 +512,13 @@ fn validate_partial_onboarding_signatures(
     trader_onboarder: &Pubkey,
 ) -> Result<(), VulcanError> {
     let num_required = tx.message.header.num_required_signatures as usize;
-    for (position, key) in tx.message.account_keys.iter().take(num_required).enumerate() {
+    for (position, key) in tx
+        .message
+        .account_keys
+        .iter()
+        .take(num_required)
+        .enumerate()
+    {
         let missing = tx
             .signatures
             .get(position)
