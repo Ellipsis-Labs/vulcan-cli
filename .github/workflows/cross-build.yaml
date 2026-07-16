@@ -27,7 +27,7 @@ jobs:
           - { arch: aarch64-darwin, runner: macos-latest }
           - { arch: x86_64-darwin, runner: macos-latest }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Configure R2 credentials
         uses: ./.github/actions/setup-r2-credentials
@@ -36,7 +36,7 @@ jobs:
           r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
 
       - name: Install nix
-        uses: nixbuild/nix-quick-install-action@v34
+        uses: nixbuild/nix-quick-install-action@v35
         with:
           nix_conf: |
             substituters = ${{ env.NIX_CACHE_URI }} https://cache.nixos.org/
